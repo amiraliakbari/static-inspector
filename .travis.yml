@@ -5,6 +5,6 @@ install:
   - pip install -r requirements.txt --use-mirrors
   - pip install coveralls --use-mirrors
 script:
-  - py.test inspector/test/ --cov inspector --cov-report term-missing
+  - coverage run --source=inspector -m py.test inspector/test/
 after_success:
   - coveralls

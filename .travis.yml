@@ -1,5 +1,10 @@
 language: python
 python:
   - "2.7"
+install:
+  - pip install -r requirements.txt --use-mirrors
+  - pip install coveralls --use-mirrors
 script:
-  - py.test inspector/test/
+  - py.test inspector/test/ --cov inspector --cov-report term-missing
+after_success:
+  - coveralls

@@ -1,6 +1,7 @@
 Static Inspector
 ================
 [![Build Status](https://travis-ci.org/amiraliakbari/static-inspector.png?branch=master)](https://travis-ci.org/amiraliakbari/static-inspector)
+[![Coverage Status](https://coveralls.io/repos/amiraliakbari/static-inspector/badge.png?branch=master)](https://coveralls.io/r/amiraliakbari/static-inspector?branch=master)
 
 Static Inspector is a Python library to parse, model, inspect, and modify source codes of a variety
 of programming languages.

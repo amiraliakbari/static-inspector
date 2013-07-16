@@ -6,6 +6,14 @@ class Language:
     JAVA = 1
     PYTHON = 2
 
+    @classmethod
+    def get_display_name(cls, lng):
+        if lng == cls.JAVA:
+            return 'Java'
+        if lng == cls.PYTHON:
+            return 'Python'
+        return 'Unknown'
+
 
 class JavaFrameworks:
     ANDROID = 11

@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import os
+
 from inspector.models.consts import Language
+from inspector.parser.file_tokenizer import FileTokenizer
 
 
 class Project(object):
@@ -39,17 +41,24 @@ class File(object):
         return Language.UNKNOWN
 
 
-class SourceFile(File):
+class SourceFile(File, FileTokenizer):
     def __init__(self, filename, package=None, language=None):
         super(SourceFile, self).__init__(filename)
+        FileTokenizer.__init__(self)
         self.package = package
         self.language = language if language is not None else self.detect_language()
 
-        # parse info:
+        # internals
+        self._tokens = []
+        self._tokens_data = []
+        self._context = []
+
+        # parse results
         self.imports = []
         self.classes = []
         self.functions = []
 
+        # loading and parsing
         self.load_content()
 
     def __unicode__(self):
@@ -70,6 +79,7 @@ class SourceFile(File):
 
     def load_content(self):
         super(SourceFile, self).load_content()
+        self.set_content(self.file_content)
         self._parse()
 
     def _parse(self):

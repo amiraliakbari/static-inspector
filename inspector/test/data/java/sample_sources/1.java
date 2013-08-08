@@ -5,7 +5,7 @@ class MyFirstProgram {
     BufferedReader in =
         new BufferedReader(new InputStreamReader(System.in));
     String name = "Instructor";
-    System.out.print("Give your name: ");
+    System.out.print("Give your name: "); // Ask from user
     try {name = in.readLine();}
         catch(Exception e) {
            System.out.println("Caught an exception!");

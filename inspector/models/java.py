@@ -1,4 +1,6 @@
 # -*- coding: utf-8 -*-
+import re
+
 from inspector.models.base import Project, SourceFile
 from inspector.models.exceptions import ParseError
 
@@ -8,55 +10,6 @@ class JavaProject(Project):
 
 
 class JavaSourceFile(SourceFile):
-    def __init__(self, *args, **kwargs):
-        super(JavaSourceFile, self).__init__(*args, **kwargs)
-        self._parse_head = 0
-        self._cur_line = 1
-        self.L = len(self.file_content)
-        self.token = None
-        self.token_type = None
-
-    def can_read(self):
-        return self._parse_head < self.L
-
-    def next_char(self, length=1):
-        # TODO: optimize for length > 1
-        for _ in range(length):
-            if not self.can_read():
-                return None
-            if self.file_content[self._parse_head] == '\n':
-                self._cur_line += 1
-            self._parse_head += 1
-        return self.file_content[self._parse_head - 1]
-
-    def skip_spaces(self):
-        while self.file_content[self._parse_head].isspace():
-            self.next_char()
-
-    def read(self, length=None, to=None, cond=None, find=None, beyond=0):
-        if length is not None:
-            length += beyond
-            self.next_char(length)
-            return self.file_content[self._parse_head - length:self._parse_head]
-        elif to is not None:
-            return self.read(length=to - self._parse_head, beyond=beyond)
-        elif cond is not None:
-            s = ''
-            while self.can_read() and cond(self.file_content[self._parse_head]):
-                s += self.next_char()
-            for _ in range(beyond):
-                s += self.next_char()
-            return s
-        elif find is not None:
-            return self.read(to=self.find_ahead(find), beyond=beyond)
-        raise ValueError
-
-    def read_ahead(self, length):
-        return self.file_content[self._parse_head:self._parse_head + length]
-
-    def find_ahead(self, sub):
-        return self.file_content.find(sub, self._parse_head)
-
     def next_token(self):
         self.skip_spaces()
         prefix = self.read_ahead(2)
@@ -72,16 +25,84 @@ class JavaSourceFile(SourceFile):
             ch = self.next_char()
             if ch == '}':
                 self.token += ch
-                self.token_type = '}'
+                self.token_type = 'end-control'
             elif ch == '{':
                 self.token_type = 'control'
             elif ch == ';':
                 self.token_type = 'statement'
+                self.token += ';'
+            elif ch is None:
+                self.token = None
+                self.token_type = None
+                return None
             else:
                 self.token = None
                 self.token_type = None
                 raise ParseError
+        self.token = self.token.strip()
         return self.token_type, self.token
 
+    def extract_token_data(self, token_type, token):
+        """
+            :type token: str
+        """
+        def split_arg(s):
+            si = s.strip().rfind(' ')
+            if si == -1:
+                return '?', s
+            return s[:si], s[si + 1:]
+
+        d = {}
+        if token_type == 'statement':
+            if token.startswith('import '):
+                d['type'] = 'import'
+        elif token_type == 'control':
+            if token == 'try':
+                d['type'] = 'try'
+            elif token.startswith('catch'):
+                d['type'] = 'catch'
+            elif token.startswith('if'):
+                d['type'] = 'if'
+            elif token.startswith('for'):
+                d['type'] = 'for'
+            elif token.startswith('while'):
+                d['type'] = 'while'
+            else:
+                cm = re.match(r'^class\s*(\w+)$', token)
+                if cm:
+                    d['type'] = 'class'
+                    d['name'] = cm.group(1)
+
+                fm = re.match(r'^(\w*\s*?)\s(\w*\s*?)\s(\w*)\s*(\w+)\s*\((.*)\)$', token)
+                if fm:
+                    d['type'] = 'function'
+                    d['access'] = fm.group(1)
+                    d['binding'] = fm.group(2)
+                    d['return_type'] = fm.group(3)
+                    d['name'] = fm.group(4)
+                    d['arguments'] = [split_arg(s) for s in fm.group(5).split(',')]
+
+            p = []
+            for _, name, _ in self._context:
+                if name is not None:
+                    p.append(name)
+            p.append(d.get('name', d['type']))  # TODO: also specify line number for if/for/...
+            d['code_path'] = '.'.join(p)
+
+            self._context.append((d['type'], d.get('name', ''), token))
+        elif token_type == 'end-control':
+            try:
+                self._context.pop()
+            except IndexError:
+                raise ParseError
+        elif token_type == 'comment':
+            pass
+        else:
+            return None
+        return d
+
     def _parse(self):
-        pass
+        while self.can_read():
+            tp, tok = self.next_token()
+            self._tokens.append((tp, tok))
+            self._tokens_data.append(self.extract_token_data(tp, tok))

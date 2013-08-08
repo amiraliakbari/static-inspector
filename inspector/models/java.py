@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import re
 
-from inspector.models.base import Project, SourceFile
+from inspector.models.base import Project, SourceFile, Class, Method, Import
 from inspector.models.exceptions import ParseError
 
 
@@ -54,9 +54,11 @@ class JavaSourceFile(SourceFile):
 
         d = {}
         if token_type == 'statement':
-            if token.startswith('import '):
-                d['type'] = 'import'
+            im = re.match(r'^import\s*([a-zA-Z0-9._*]+);$', token)
+            if im:
+                d = Import(im.group(1))
         elif token_type == 'control':
+            # TODO: also specify line number for if/for/...
             if token == 'try':
                 d['type'] = 'try'
             elif token.startswith('catch'):
@@ -68,28 +70,35 @@ class JavaSourceFile(SourceFile):
             elif token.startswith('while'):
                 d['type'] = 'while'
             else:
+                parent_class = None
+                for c, _, _ in reversed(self._context):
+                    if isinstance(c, Class):
+                        parent_class = c
+                        break
+
                 cm = re.match(r'^class\s*(\w+)$', token)
                 if cm:
-                    d['type'] = 'class'
-                    d['name'] = cm.group(1)
+                    d = Class(name=cm.group(1), parent_class=parent_class)
 
                 fm = re.match(r'^(\w*\s*?)\s(\w*\s*?)\s(\w*)\s*(\w+)\s*\((.*)\)$', token)
                 if fm:
-                    d['type'] = 'function'
-                    d['access'] = fm.group(1)
-                    d['binding'] = fm.group(2)
-                    d['return_type'] = fm.group(3)
-                    d['name'] = fm.group(4)
-                    d['arguments'] = [split_arg(s) for s in fm.group(5).split(',')]
+                    if parent_class is None:
+                        raise ParseError('Functions must be in a class in Java.')
+                    d = Method(parent_class,
+                               name=fm.group(4),
+                               arguments=[split_arg(s) for s in fm.group(5).split(',')],
+                               return_type=fm.group(3),
+                               binding=Method.parse_binding(fm.group(2)),
+                               access=Method.parse_access(fm.group(1)))
 
             p = []
             for _, name, _ in self._context:
                 if name is not None:
                     p.append(name)
-            p.append(d.get('name', d['type']))  # TODO: also specify line number for if/for/...
-            d['code_path'] = '.'.join(p)
-
-            self._context.append((d['type'], d.get('name', ''), token))
+            p.append(d.get('name', d['type']) if isinstance(d, dict) else d.name)
+            if isinstance(d, dict):
+                d['code_path'] = '.'.join(p)
+            self._context.append((d, d.get('name', '') if isinstance(d, dict) else d.name, token))
         elif token_type == 'end-control':
             try:
                 self._context.pop()
@@ -105,4 +114,9 @@ class JavaSourceFile(SourceFile):
         while self.can_read():
             tp, tok = self.next_token()
             self._tokens.append((tp, tok))
-            self._tokens_data.append(self.extract_token_data(tp, tok))
+            d = self.extract_token_data(tp, tok)
+            if isinstance(d, Import):
+                self.imports.append(d)
+            elif isinstance(d, Class):
+                self.classes.append(d)
+            self._tokens_data.append(d)

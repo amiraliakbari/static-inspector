@@ -33,5 +33,9 @@ class TestJavaParse(unittest.TestCase):
         self.assertEqual(sf.next_token(), None)
         self.assertEqual(sf.next_token(), None)
 
+    def test_modelling(self):
+        sf = SourceFile.build_source_file(os.path.join(self.data_path, 'sample_sources', '1.java'))
+        self.assertEqual(unicode(sf), u'Java SourceFile: 1 imports, 1 classes, 0 functions')
+
 if __name__ == '__main__':
     unittest.main()

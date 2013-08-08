@@ -1,24 +1,7 @@
 # -*- coding: utf-8 -*-
+from inspector.utils.lang import enum
 
 
-class Language:
-    UNKNOWN = 0
-    JAVA = 1
-    PYTHON = 2
-
-    @classmethod
-    def get_display_name(cls, lng):
-        if lng == cls.JAVA:
-            return 'Java'
-        if lng == cls.PYTHON:
-            return 'Python'
-        return 'Unknown'
-
-
-class JavaFrameworks:
-    ANDROID = 11
-
-
-class PythonFrameworks:
-    DJANGO = 21
-    FLASK = 22
+Language = enum('UNKNOWN', 'JAVA', 'PYTHON', verbose_names=['Unknown', 'Java', 'Python'])
+JavaFrameworks = enum('ANDROID', verbose_names=['Android'])
+PythonFrameworks = enum('DJANGO', 'FLASK', verbose_names=['Django', 'Flask'])

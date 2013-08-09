@@ -3,7 +3,7 @@ import os
 import re
 
 from inspector.utils.lang import enum
-from inspector.models.base import Project, SourceFile, Class, Method, Import
+from inspector.models.base import Project, SourceFile, Class, Method, Import, Comment
 from inspector.models.exceptions import ParseError
 
 
@@ -130,23 +130,33 @@ class JavaSourceFile(SourceFile):
                         parent_class = c
                         break
 
-                cm = re.match(r'^(\w+\s+)?class\s*(\w+)$', token)
+                CLASS_RE = r'^(\w+\s+)?class\s*(\w+)(?:\s*extends\s*([a-zA-Z0-9_.]+))?(?:\s+implements\s*(.+?)\s*)?$'
+                METHOD_RE = r'^([a-z]+\s+)?(static\s+)?([a-zA-Z0-9_]+\s+)?(\w+)\s*\((.*)\)(?:\s*throws ([a-zA-Z0-9_.,]+))?$'
+
+                cm = re.match(CLASS_RE, token)
                 if cm:
                     acc_str = cm.group(1)
+                    ext_str = cm.group(3)
+                    imp_str = cm.group(4)
                     d = JavaClass(name=cm.group(2),
                                   parent_class=parent_class,
+                                  extends=ext_str,
+                                  implements=[s.strip() for s in imp_str.split(',')] if imp_str else [],
                                   access=JavaClass.parse_access(acc_str.strip() if acc_str else None))
 
-                fm = re.match(r'^([a-z]+\s+)?(static\s+)?([a-z]+\s+)?(\w+)\s*\((.*)\)$', token)
+                fm = re.match(METHOD_RE, token)
                 if fm:
                     if parent_class is None:
                         raise ParseError('Functions must be in a class in Java.')
+                    throw_str = fm.group(6)
+                    args_str = fm.group(5)
                     d = Method(parent_class,
                                name=fm.group(4),
-                               arguments=[split_arg(s) for s in fm.group(5).split(',')],
+                               arguments=[split_arg(s) for s in args_str.split(',')] if args_str else [],
                                return_type=fm.group(3),
                                binding=Method.parse_binding(fm.group(2)),
-                               access=Method.parse_access(fm.group(1), default=Method.ACCESS.PACKAGE))
+                               access=Method.parse_access(fm.group(1), default=Method.ACCESS.PACKAGE),
+                               throws=[s.strip() for s in throw_str.split(',')] if throw_str else None)
 
                 if not d:
                     raise ParseError('Unknown token: "{0}".'.format(token))
@@ -167,7 +177,7 @@ class JavaSourceFile(SourceFile):
                 raise ParseError
 
         elif token_type == 'comment':
-            pass  # why?
+            d = Comment(token)
 
         else:
             print 'Unknown token: "{0}".'.format(token)
@@ -191,9 +201,14 @@ class JavaClass(Class):
     ACCESS = enum('UNKNOWN', 'PRIVATE', 'PROTECTED', 'PACKAGE', 'PUBLIC',
                   verbose_names=['unknown', 'private', 'protected', 'package', 'public'])
 
-    def __init__(self, name, source_file=None, package=None, parent_class=None, access=None):
-        super(JavaClass, self).__init__(name, source_file=source_file, package=package, parent_class=parent_class)
+    def __init__(self, name, source_file=None, package=None, parent_class=None, extends=None, access=None,
+                 implements=None):
+        super(JavaClass, self).__init__(name, source_file=source_file, package=package, parent_class=parent_class,
+                                        extends=extends)
+        if len(self.extends) > 1:
+            raise ParseError(u'Multiple inheritance is not supported in Java.')
         self.access = access or self.ACCESS.PACKAGE
+        self.implements = implements or []  # TODO: set real Interface reference
 
     @classmethod
     def parse_access(cls, access_str):

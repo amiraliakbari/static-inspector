@@ -157,12 +157,18 @@ class Import(object):
 
 
 class Class(object):
-    def __init__(self, name, source_file=None, package=None, parent_class=None):
+    def __init__(self, name, source_file=None, package=None, parent_class=None, extends=None):
         self.name = name
         self.parent_class = parent_class
         self.source_file = source_file
         self.package = package
         self.methods = []
+        if not extends:
+            self.extends = []
+        else:
+            if not isinstance(extends, list):
+                extends = [extends]
+            self.extends = extends  # TODO: set real Class reference
 
     def __unicode__(self):
         q_name = u'{0}.{1}'.format(self.parent_class.name, self.name) if self.parent_class else self.name
@@ -197,21 +203,25 @@ class Method(Function):
     BINDING = enum('UNKNOWN', 'UNBOUND', 'STATIC', 'CLASS', 'INSTANCE',
                    verbose_names=['unknown', 'unbound', 'static', 'class', 'instance'])
 
-    def __init__(self, parent_class, name, return_type=None, arguments=None, access=None, binding=None, abstract=False):
+    def __init__(self, parent_class, name, return_type=None, arguments=None, access=None, binding=None, abstract=False,
+                 throws=None):
         super(Method, self).__init__(name, return_type=return_type, arguments=arguments)
         self.parent_class = None
         self.set_parent_class(parent_class)
         self.access = access or self.ACCESS.UNKNOWN
         self.binding = binding or self.BINDING.UNKNOWN
         self.abstract = abstract
+        self.throws = throws or []
 
     def __unicode__(self):
         args_rep = u', '.join([u'{0} {1}'.format(x, y) for x, y in self.arguments])
         acc_rep = self.ACCESS.display_name[self.access]
         abs_rep = u' Abstract' if self.abstract else ''
         bin_rep = (u' ' + self.BINDING.display_name[self.binding]) if self.binding != self.BINDING.INSTANCE else u''
-        fmt = u'{acc}{abs}{bin} Method {name}({args}): {ret}'
-        return fmt.format(acc=acc_rep, abs=abs_rep, bin=bin_rep, name=self.name, args=args_rep, ret=self.return_type)
+        thr_rep = (u', throws ' + u', '.join(self.throws)) if self.throws else u''
+        fmt = u'{acc}{abs}{bin} Method {name}({args}): {ret} {thr}'
+        return fmt.format(acc=acc_rep, abs=abs_rep, bin=bin_rep, name=self.name, args=args_rep, ret=self.return_type,
+                          thr=thr_rep)
 
     def set_parent_class(self, parent_class):
         """
@@ -243,3 +253,34 @@ class Method(Function):
             if v == binding_str:
                 return k
         return None
+
+
+class Comment(object):
+    def __init__(self, content):
+        """
+            :param basestring content: comment content, including // or /* */
+        """
+        self.content = content
+        self.doc_comment = self.content.startswith(u'/**')
+
+        if self.content.startswith('//'):
+            self.multiline = False
+            pat = r'^//(/|\s)*'
+        elif self.content.startswith('/*'):
+            self.multiline = True
+            pat = r'(^/\*(\*|\s)*|(\*|\s)*\*/$)'
+        else:
+            raise ValueError(u'Invalid comment start.')
+        self.content = re.sub(pat, '', self.content)
+
+    def __unicode__(self):
+        c = self.content
+        if len(c) > 10:
+            c = c[:10] + u'...'
+        u = u'Comment: {0}'.format(c)
+        if self.doc_comment:
+            u += u' (docstring)'
+        return u
+
+    def __str__(self):
+        return unicode(self)

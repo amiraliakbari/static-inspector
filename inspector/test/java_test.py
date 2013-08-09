@@ -30,8 +30,8 @@ class TestJavaParse(unittest.TestCase):
             ('end-control', '}'),
         ]
         self.assertEqual(sf._tokens, tokens)
-        self.assertEqual(sf.next_token(), None)
-        self.assertEqual(sf.next_token(), None)
+        self.assertEqual(sf.next_token(), (None, None))
+        self.assertEqual(sf.next_token(), (None, None))
 
     def test_modelling(self):
         sf = SourceFile.build_source_file(os.path.join(self.data_path, 'sample_sources', '1.java'))

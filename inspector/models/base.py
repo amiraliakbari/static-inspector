@@ -5,6 +5,7 @@ import re
 from inspector.models.consts import Language
 from inspector.parser.file_tokenizer import FileTokenizer
 from inspector.utils.lang import enum
+from inspector.utils.strings import summarize
 
 
 class LocatableInterface(object):
@@ -78,11 +79,6 @@ class SourceFile(File, FileTokenizer):
         self.package = package
         self.language = language if language is not None else self.detect_language()
 
-        # internals
-        self._tokens = []
-        self._tokens_data = []
-        self._context = []
-
         # parse results
         self.imports = []
         self.globals = []
@@ -116,10 +112,34 @@ class SourceFile(File, FileTokenizer):
         self.set_content(self.file_content)
         self._parse()
 
+    #######################
+    #  Parsing Utilities  #
+    #######################
+    def find_context_top(self, cond=None, default=None):
+        if cond is None:
+            return self._context[-1][0] if self._context else default
+        for c in reversed(self._context):
+            if cond(c):
+                return c
+        return default
+
+    def next_token(self):
+        raise NotImplementedError()
+
     def _parse(self):
         """ Extract SourceFile data by parsing the code, result is saved in object's attributes.
         """
-        raise NotImplementedError
+        self._context = []
+        while self.can_read():
+            t = self.next_token()
+            if self.find_context_top(cond=lambda x: x.isinstance(CodeBlock)) is None:
+                self.globals.append(t.model)
+            elif t.isinstance(Import):
+                self.imports.append(t.model)
+            elif t.isinstance(Class):
+                self.classes.append(t.model)
+            elif t.isinstance(Function) and not t.isinstance(Method):
+                self.functions.append(t.model)
 
     @staticmethod
     def build_source_file(filename):
@@ -156,6 +176,17 @@ class Import(object):
         return unicode(self)
 
 
+class CodeBlock(object):
+    def __init__(self):
+        self.statements = []  # array of Statement
+
+    def add_statement(self, statement):
+        """
+            :param Statement statement: statement to be added
+        """
+        self.statements.append(statement)
+
+
 class Class(object):
     def __init__(self, name, source_file=None, package=None, parent_class=None, extends=None):
         self.name = name
@@ -178,14 +209,13 @@ class Class(object):
         return unicode(self)
 
 
-class Function(object):
+class Function(CodeBlock):
     def __init__(self, name, return_type=None, arguments=None):
+        super(Function, self).__init__()
         self.name = name
         self.arguments = arguments or []
         self.return_type = return_type or ''
         self.binding = Method.BINDING.UNBOUND
-
-        # code location
         self.starting_line = None
         self.ending_line = None
 
@@ -274,13 +304,83 @@ class Comment(object):
         self.content = re.sub(pat, '', self.content)
 
     def __unicode__(self):
-        c = self.content
-        if len(c) > 10:
-            c = c[:10] + u'...'
-        u = u'Comment: {0}'.format(c)
+        u = u'Comment: {0}'.format(summarize(self.content, max_len=10))
         if self.doc_comment:
             u += u' (docstring)'
         return u
 
     def __str__(self):
         return unicode(self)
+
+
+class Statement(object):
+    def __init__(self, code):
+        self.code = code
+
+    def __unicode__(self):
+        return u'Statement: {0}'.format(summarize(self.code, max_len=30))
+
+    def __str__(self):
+        return unicode(self)
+
+
+class IfBlock(CodeBlock):
+    def __init__(self, condition):
+        super(IfBlock, self).__init__()
+        self.condition = condition
+        self.mode = None
+        self.elifs = []
+        self.else_block = CodeBlock()
+
+    def add_elif(self, condition):
+        self.elifs.append((condition, CodeBlock()))
+        self.mode = u'elif'
+
+    def activate_else(self):
+        self.mode = u'else'
+
+    def add_statement(self, statement):
+        if self.mode == u'elif':
+            self.elifs[-1][1].append(statement)
+        elif self.mode == u'else':
+            self.else_block.add_statement(statement)
+        else:
+            super(IfBlock, self).add_statement(statement)
+
+
+class ExceptionBlock(CodeBlock):
+    def __init__(self):
+        super(ExceptionBlock, self).__init__()
+        self.catches = {}
+        self.active_catch = None
+        self.finally_block = CodeBlock()
+        self.else_block = CodeBlock()  # python specific
+
+    def add_catch(self, catch):
+        if catch in self.catches:
+            raise ValueError(u'Catch already exists.')
+        self.catches[catch] = CodeBlock()
+        self.active_catch = catch
+
+    def add_statement(self, statement):
+        if self.active_catch is not None:
+            self.catches[self.active_catch].append(statement)
+        else:
+            super(ExceptionBlock, self).add_statement(statement)
+
+
+class ForBlock(CodeBlock):
+    pass
+
+
+class WhileBlock(CodeBlock):
+    pass
+
+
+class DoWhileBlock(WhileBlock):
+    pass
+
+
+class WithBlock(CodeBlock):
+    pass
+

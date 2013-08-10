@@ -45,7 +45,7 @@ class FileTokenizer(object):
         return self.file_content[self._parse_head - 1]
 
     def skip_spaces(self):
-        while self.can_read() and self.file_content[self._parse_head].isspace():
+        while self.can_read() and self.read_ahead_char().isspace():
             self.next_char()
 
     def read(self, length=None, to=None, cond=None, find=None, beyond=0):
@@ -68,6 +68,9 @@ class FileTokenizer(object):
 
     def read_ahead(self, length):
         return self.file_content[self._parse_head:self._parse_head + length]
+
+    def read_ahead_char(self):
+        return self.file_content[self._parse_head]
 
     def find_ahead(self, sub):
         return self.file_content.find(sub, self._parse_head)

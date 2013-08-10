@@ -2,9 +2,11 @@
 import os
 import re
 
-from inspector.utils.lang import enum
-from inspector.models.base import Project, SourceFile, Class, Method, Import, Comment
+from inspector.parser.base import Token, LanguageSpecificParser
+from inspector.models.base import Project, SourceFile, Class, Method, Import, Comment, Statement, ExceptionBlock, CodeBlock, ForBlock, WhileBlock, IfBlock, Function
+from inspector.models.consts import Language
 from inspector.models.exceptions import ParseError
+from inspector.utils.lang import enum
 
 
 class JavaProject(Project):
@@ -51,153 +53,135 @@ class JavaProject(Project):
 class JavaSourceFile(SourceFile):
     def __init__(self, filename, package=None):
         super(JavaSourceFile, self).__init__(filename, package=package)
+        self.language = Language.JAVA
 
     def next_token(self):
+        """
+            :return: next token, parsed
+            :rtype: Token
+        """
+        t = Token()
         self.skip_spaces()
-        prefix = self.read_ahead(2)
+
+        prefix = self.read_ahead(2)  # to detect comments
         if prefix == '//':
-            self.token_type = 'comment'
-            self.token = self.read(cond=lambda ch: ch != '\n')
-            self.next_char()
+            t.type = 'comment'
+            t.content = self.read(cond=lambda ch: ch != '\n')
+            t.model = Comment(t.content)
         elif prefix == '/*':
-            self.token_type = 'comment'
-            self.token = self.read(find='*/', beyond=2)
+            t.type = 'comment'
+            t.content = self.read(find='*/', beyond=2)
+            t.model = Comment(t.content)
+
         else:
-            self.token = self.read(cond=lambda c: c not in ['{', '}', ';'])
+            t.content = self.read(cond=lambda c: c not in ['{', '}', ';'])  # TODO: count () here
             ch = self.next_char()
             if ch == '}':
-                self.token += ch
-                self.token_type = 'end-control'
+                if t.content.strip():
+                    raise ParseError(u'Unexpected token: } in "{0}".'.format(t.content))
+                t.type = 'end-control'
+                t.content = '}'
+
+                # context
+                try:
+                    self._context.pop()
+                except IndexError:
+                    raise ParseError(u'Unmatched }.')
+
             elif ch == '{':
-                self.token_type = 'control'
+                t.type = 'control'
+                t.content = t.content.strip()
+                push = False
+
+                # Exception
+                if t.content == 'try':
+                    t.model = ExceptionBlock()
+                    push = True
+                elif t.content.startswith('catch'):
+                    t = self.find_context_top()
+                    if isinstance(t, ExceptionBlock):
+                        t.add_catch(t.content[5:].strip())  # TODO: remove (), etc.
+                    else:
+                        raise ParseError('catch not in a try block: {0}.'.format(t.content))
+
+                # IfBlock
+                elif t.content.startswith('if'):
+                    t.model = IfBlock(t.content[2:].strip())  # TODO: remove (), etc.
+                    push = True
+                elif t.content.startswith('else'):
+                    t = self.find_context_top()
+                    if isinstance(t, IfBlock):
+                        if t.content.startswith('else if'):  # TODO: is this ok for java?
+                            t.add_elif(t.content[7:].strip())  # TODO: remove (), etc.
+                        else:
+                            t.activate_else()
+                    else:
+                        raise ParseError('else not in a if block: {0}.'.format(t.content))
+
+                # ForBlock
+                elif t.content.startswith('for'):
+                    t.model = ForBlock()
+                    push = True
+
+                # WhileBlock
+                elif t.content.startswith('while'):
+                    t.model = WhileBlock()
+                    push = True
+
+                # More complex parts (class, method)
+                else:
+                    parent_class = self.find_context_top(lambda x: x.isinstance(Class))
+                    t.model = JavaClass.try_parse(t.content, {u'parent_class': parent_class})
+                    if not t.model:
+                        t.model = JavaMethod.try_parse(t.content, {u'parent_class': parent_class})
+                    if not t.model:
+                        raise ParseError(u'Token can not be parsed: "{0}".'.format(t.content))
+                    else:
+                        push = True
+
+                if push:
+                    self._context.append(t)
+
             elif ch == ';':
-                self.token_type = 'statement'
-                self.token += ';'
+                t.type = 'statement'
+                t.content += ';'
+
+                is_special_statement = False
+
+                # package
+                PACKAGE_RE = re.compile(r'package\s+([a-zA-Z0-9_.]+)\s*;')
+                pm = PACKAGE_RE.match(t.content)
+                if pm:
+                    self.package = pm.group(1).strip()  # TODO: check with file path
+                    is_special_statement = True
+
+                # normal statement
+                t.model = JavaImport.try_parse(t.content)
+                if not t.model:
+                    t.model = JavaStatement.try_parse(t.content)
+                    if t.model and not is_special_statement:
+                        ct = self.find_context_top()
+                        if isinstance(ct, CodeBlock):
+                            ct.add_statement(t.model)
+                        else:
+                            raise ParseError(u'Statement is not in a block: {0}.'.format(t.model))
+                    else:
+                        raise ParseError(u'Invalid statement: "{0}"'.format(t.content))
+
             elif ch is None:
-                self.token = None
-                self.token_type = None
-                return None, None
+                t = None
+
             else:
-                self.token = None
-                self.token_type = None
-                raise ParseError
-        self.token = self.token.strip()
+                assert False
+
+        # final cares
         self.skip_spaces()
-        return self.token_type, self.token
-
-    def extract_token_data(self, token_type, token):
-        """
-            :type token: str
-        """
-        def split_arg(s):
-            si = s.strip().rfind(' ')
-            if si == -1:
-                return '?', s
-            return s[:si], s[si + 1:]
-
-        # print '@', token
-        d = {}
-        if token_type == 'statement':
-            im = re.match(r'^import\s*([a-zA-Z0-9._*]+);$', token)
-            if im:
-                d = Import(im.group(1))
-
-            # TODO: consider package
-
-            if isinstance(d, dict):
-                d['code'] = token
-
-        elif token_type == 'control':
-            # TODO: also specify line number for if/for/...
-            if token == 'try':
-                d['type'] = 'try'
-            elif token.startswith('catch'):
-                d['type'] = 'catch'
-            elif token.startswith('if'):
-                d['type'] = 'if'
-            elif token.startswith('else if'):
-                d['type'] = 'else if'
-            elif token.startswith('else'):
-                d['type'] = 'else'
-            elif token.startswith('for'):
-                d['type'] = 'for'
-            elif token.startswith('while'):
-                d['type'] = 'while'
-            else:
-                parent_class = None
-                for c, _, _ in reversed(self._context):
-                    if isinstance(c, Class):
-                        parent_class = c
-                        break
-
-                CLASS_RE = r'^(\w+\s+)?class\s*(\w+)(?:\s*extends\s*([a-zA-Z0-9_.]+))?(?:\s+implements\s*(.+?)\s*)?$'
-                METHOD_RE = r'^([a-z]+\s+)?(static\s+)?([a-zA-Z0-9_]+\s+)?(\w+)\s*\((.*)\)(?:\s*throws ([a-zA-Z0-9_.,]+))?$'
-
-                cm = re.match(CLASS_RE, token)
-                if cm:
-                    acc_str = cm.group(1)
-                    ext_str = cm.group(3)
-                    imp_str = cm.group(4)
-                    d = JavaClass(name=cm.group(2),
-                                  parent_class=parent_class,
-                                  extends=ext_str,
-                                  implements=[s.strip() for s in imp_str.split(',')] if imp_str else [],
-                                  access=JavaClass.parse_access(acc_str.strip() if acc_str else None))
-
-                fm = re.match(METHOD_RE, token)
-                if fm:
-                    if parent_class is None:
-                        raise ParseError('Functions must be in a class in Java.')
-                    throw_str = fm.group(6)
-                    args_str = fm.group(5)
-                    d = Method(parent_class,
-                               name=fm.group(4),
-                               arguments=[split_arg(s) for s in args_str.split(',')] if args_str else [],
-                               return_type=fm.group(3),
-                               binding=Method.parse_binding(fm.group(2)),
-                               access=Method.parse_access(fm.group(1), default=Method.ACCESS.PACKAGE),
-                               throws=[s.strip() for s in throw_str.split(',')] if throw_str else None)
-
-                if not d:
-                    raise ParseError('Unknown token: "{0}".'.format(token))
-
-            p = []
-            for _, name, _ in self._context:
-                if name is not None:
-                    p.append(name)
-            p.append(d.get('name', d['type']) if isinstance(d, dict) else d.name)
-            if isinstance(d, dict):
-                d['code_path'] = '.'.join(p)
-            self._context.append((d, d.get('name', '') if isinstance(d, dict) else d.name, token))
-
-        elif token_type == 'end-control':
-            try:
-                self._context.pop()
-            except IndexError:
-                raise ParseError
-
-        elif token_type == 'comment':
-            d = Comment(token)
-
-        else:
-            print 'Unknown token: "{0}".'.format(token)
-            return None
-
-        return d
-
-    def _parse(self):
-        while self.can_read():
-            tp, tok = self.next_token()
-            self._tokens.append((tp, tok))
-            d = self.extract_token_data(tp, tok)
-            if isinstance(d, Import):
-                self.imports.append(d)
-            elif isinstance(d, Class):
-                self.classes.append(d)
-            self._tokens_data.append(d)
+        t.normalize_content()
+        return t
 
 
-class JavaClass(Class):
+class JavaClass(Class, LanguageSpecificParser):
+    CLASS_RE = re.compile(r'^(\w+\s+)?class\s*(\w+)(?:\s*extends\s*([a-zA-Z0-9_.]+))?(?:\s+implements\s*(.+?)\s*)?$')
     ACCESS = enum('UNKNOWN', 'PRIVATE', 'PROTECTED', 'PACKAGE', 'PUBLIC',
                   verbose_names=['unknown', 'private', 'protected', 'package', 'public'])
 
@@ -219,3 +203,76 @@ class JavaClass(Class):
             if v == access_str:
                 return k
         return None
+
+    @classmethod
+    def try_parse(cls, string, opts=None):
+        opts = opts or {}
+        cm = cls.CLASS_RE.match(string)
+        if not cm:
+            return None
+
+        acc_str = cm.group(1)
+        ext_str = cm.group(3)
+        imp_str = cm.group(4)
+        return JavaClass(name=cm.group(2),
+                         parent_class=opts.get(u'parent_class'),
+                         extends=ext_str,
+                         implements=[s.strip() for s in imp_str.split(',')] if imp_str else [],
+                         access=JavaClass.parse_access(acc_str.strip() if acc_str else None))
+
+
+class JavaMethod(Method, LanguageSpecificParser):
+    METHOD_RE = re.compile(r'^([a-z]+\s+)?(static\s+)?([a-zA-Z0-9_]+\s+)?(\w+)\s*\((.*)\)(?:\s*throws ([a-zA-Z0-9_.,]+))?$')
+
+    @classmethod
+    def try_parse(cls, string, opts=None):
+        opts = opts or {}
+        fm = cls.METHOD_RE.match(string)
+        if not fm:
+            return None
+
+        parent_class = opts.get(u'parent_class')
+        if parent_class is None:
+            raise ParseError(u'Functions must be in a class in Java.')
+
+        def split_arg(s):
+            si = s.strip().rfind(' ')
+            if si == -1:
+                return '?', s
+            return s[:si], s[si + 1:]
+
+        throw_str = fm.group(6)
+        args_str = fm.group(5)
+        return Method(parent_class,
+                      name=fm.group(4),
+                      arguments=[split_arg(s) for s in args_str.split(',')] if args_str else [],
+                      return_type=fm.group(3),
+                      binding=Method.parse_binding(fm.group(2)),
+                      access=Method.parse_access(fm.group(1), default=Method.ACCESS.PACKAGE),
+                      throws=[s.strip() for s in throw_str.split(',')] if throw_str else None)
+
+
+class JavaImport(Import, LanguageSpecificParser):
+    IMPORT_RE = re.compile(r'^import\s*([a-zA-Z0-9._*]+);$')
+
+    @classmethod
+    def try_parse(cls, string, opts=None):
+        """
+            :param str or unicode string: code to be parsed
+            :rtype: Import
+        """
+        im = cls.IMPORT_RE.match(string)
+        if im:
+            return Import(im.group(1))
+        return None
+
+
+class JavaStatement(Statement, LanguageSpecificParser):
+    @classmethod
+    def try_parse(cls, string, opts=None):
+        """
+            :param str or unicode string: code to be parsed
+            :rtype: Statement
+        """
+        # TODO: any checks required?
+        return Statement(string)

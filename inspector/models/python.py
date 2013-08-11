@@ -11,6 +11,3 @@ class PythonSourceFile(SourceFile):
     def __init__(self, filename, package=None):
         super(PythonSourceFile, self).__init__(filename, package=package)
         self.language = Language.PYTHON
-
-    def _parse(self):
-        pass

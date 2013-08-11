@@ -52,8 +52,14 @@ class JavaProject(Project):
 
 class JavaSourceFile(SourceFile):
     def __init__(self, filename, package=None):
-        super(JavaSourceFile, self).__init__(filename, package=package)
-        self.language = Language.JAVA
+        self.interfaces = []
+        super(JavaSourceFile, self).__init__(filename, package=package, language=Language.JAVA)
+
+    def __unicode__(self):
+        u = super(JavaSourceFile, self).__unicode__()
+        if self.interfaces:
+            u += u', {0} interfaces'.format(len(self.interfaces))
+        return u
 
     def next_token(self):
         """
@@ -74,7 +80,22 @@ class JavaSourceFile(SourceFile):
             t.model = Comment(t.content)
 
         else:
-            t.content = self.read(cond=lambda c: c not in ['{', '}', ';'])  # TODO: count () here
+
+            class IsNotBreaking(object):
+                def __init__(self):
+                    self.par_open = 0
+
+                def __call__(self, ch):
+                    if ch == '(':
+                        self.par_open += 1
+                    elif ch == ')':
+                        self.par_open -= 1
+                    else:
+                        if not self.par_open and ch in ['{', '}', ';']:
+                            return False
+                    return True
+
+            t.content = self.read(cond=IsNotBreaking())  # TODO: count () here
             ch = self.next_char()
             if ch == '}':
                 if t.content.strip():
@@ -84,7 +105,7 @@ class JavaSourceFile(SourceFile):
 
                 # context
                 try:
-                    self._context.pop()
+                    self.context_pop()
                 except IndexError:
                     raise ParseError(u'Unmatched }.')
 
@@ -92,29 +113,33 @@ class JavaSourceFile(SourceFile):
                 t.type = 'control'
                 t.content = t.content.strip()
                 push = False
+                repush = False
 
                 # Exception
                 if t.content == 'try':
                     t.model = ExceptionBlock()
                     push = True
                 elif t.content.startswith('catch'):
-                    t = self.find_context_top()
-                    if isinstance(t, ExceptionBlock):
-                        t.add_catch(t.content[5:].strip())  # TODO: remove (), etc.
+                    top_try = self._last_popped
+                    if top_try.isinstance(ExceptionBlock):
+                        top_try.model.add_catch(t.content[5:].strip())  # TODO: remove (), etc.
+                        repush = True
                     else:
-                        raise ParseError('catch not in a try block: {0}.'.format(t.content))
+                        raise ParseError(u'catch not in a try block: {0}.'.format(t.content))
 
                 # IfBlock
                 elif t.content.startswith('if'):
                     t.model = IfBlock(t.content[2:].strip())  # TODO: remove (), etc.
                     push = True
                 elif t.content.startswith('else'):
-                    t = self.find_context_top()
-                    if isinstance(t, IfBlock):
+                    top_if = self._last_popped
+                    if top_if.isinstance(IfBlock):
                         if t.content.startswith('else if'):  # TODO: is this ok for java?
-                            t.add_elif(t.content[7:].strip())  # TODO: remove (), etc.
+                            top_if.model.add_elif(t.content[7:].strip())  # TODO: remove (), etc.
+                            repush = True
                         else:
-                            t.activate_else()
+                            top_if.model.activate_else()
+                            repush = True
                     else:
                         raise ParseError('else not in a if block: {0}.'.format(t.content))
 
@@ -130,8 +155,14 @@ class JavaSourceFile(SourceFile):
 
                 # More complex parts (class, method)
                 else:
+                    # TODO: is it necessary to use parent_block here?
                     parent_class = self.find_context_top(lambda x: x.isinstance(Class))
-                    t.model = JavaClass.try_parse(t.content, {u'parent_class': parent_class})
+                    if parent_class:
+                        parent_class = parent_class.model
+                    if not t.model:
+                        t.model = JavaClass.try_parse(t.content, {u'parent_class': parent_class})
+                    if not t.model:
+                        t.model = JavaInterface.try_parse(t.content, {u'parent_class': parent_class})
                     if not t.model:
                         t.model = JavaMethod.try_parse(t.content, {u'parent_class': parent_class})
                     if not t.model:
@@ -139,7 +170,9 @@ class JavaSourceFile(SourceFile):
                     else:
                         push = True
 
-                if push:
+                if repush:
+                    self._context.append(self._last_popped)
+                elif push:
                     self._context.append(t)
 
             elif ch == ';':
@@ -161,8 +194,8 @@ class JavaSourceFile(SourceFile):
                     t.model = JavaStatement.try_parse(t.content)
                     if t.model and not is_special_statement:
                         ct = self.find_context_top()
-                        if isinstance(ct, CodeBlock):
-                            ct.add_statement(t.model)
+                        if ct.isinstance(CodeBlock):
+                            ct.model.add_statement(t.model)
                         else:
                             raise ParseError(u'Statement is not in a block: {0}.'.format(t.model))
                     else:
@@ -176,8 +209,15 @@ class JavaSourceFile(SourceFile):
 
         # final cares
         self.skip_spaces()
-        t.normalize_content()
+        if t:
+            t.normalize_content()
         return t
+
+    def _save_model(self, token_model):
+        if isinstance(token_model, JavaInterface):
+            self.interfaces.append(token_model)
+        else:
+            super(JavaSourceFile, self)._save_model(token_model)
 
 
 class JavaClass(Class, LanguageSpecificParser):
@@ -221,8 +261,35 @@ class JavaClass(Class, LanguageSpecificParser):
                          access=JavaClass.parse_access(acc_str.strip() if acc_str else None))
 
 
+class JavaInterface(JavaClass):
+    INTERFACE_RE = re.compile(r'^(\w+\s+)?interface\s*(\w+)(?:\s+implements\s*(.+?)\s*)?$')
+
+    def __init__(self, name, source_file=None, package=None, parent_class=None, access=None, implements=None):
+        super(JavaInterface, self).__init__(name, source_file=source_file, package=package, parent_class=parent_class,
+                                            access=access, implements=implements)
+
+    @classmethod
+    def try_parse(cls, string, opts=None):
+        opts = opts or {}
+        cm = cls.INTERFACE_RE.match(string)
+        if not cm:
+            return None
+
+        acc_str = cm.group(1)
+        imp_str = cm.group(3)
+        return JavaInterface(name=cm.group(2),
+                             parent_class=opts.get(u'parent_class'),
+                             implements=[s.strip() for s in imp_str.split(',')] if imp_str else [],
+                             access=JavaClass.parse_access(acc_str.strip() if acc_str else None))
+
+
 class JavaMethod(Method, LanguageSpecificParser):
-    METHOD_RE = re.compile(r'^([a-z]+\s+)?(static\s+)?([a-zA-Z0-9_]+\s+)?(\w+)\s*\((.*)\)(?:\s*throws ([a-zA-Z0-9_.,]+))?$')
+    # TODO: initial groups may come in other orders
+    METHOD_RE = re.compile(r'^([a-z]+\s+)?(static\s+)?(synchronized\s+)?([a-zA-Z0-9_]+\s+)?(\w+)\s*\((.*)\)(?:\s*throws ([a-zA-Z0-9_.,]+))?$')
+
+    def __init__(self, *args, **kwargs):
+        self.synchronized = kwargs.pop(u'synchronized', None) or False
+        super(JavaMethod, self).__init__(*args, **kwargs)
 
     @classmethod
     def try_parse(cls, string, opts=None):
@@ -241,15 +308,16 @@ class JavaMethod(Method, LanguageSpecificParser):
                 return '?', s
             return s[:si], s[si + 1:]
 
-        throw_str = fm.group(6)
-        args_str = fm.group(5)
-        return Method(parent_class,
-                      name=fm.group(4),
-                      arguments=[split_arg(s) for s in args_str.split(',')] if args_str else [],
-                      return_type=fm.group(3),
-                      binding=Method.parse_binding(fm.group(2)),
-                      access=Method.parse_access(fm.group(1), default=Method.ACCESS.PACKAGE),
-                      throws=[s.strip() for s in throw_str.split(',')] if throw_str else None)
+        throw_str = fm.group(7)
+        args_str = fm.group(6)
+        return JavaMethod(parent_class,
+                          name=fm.group(5),
+                          arguments=[split_arg(s) for s in args_str.split(',')] if args_str else [],
+                          return_type=fm.group(4),
+                          synchronized=fm.group(3),
+                          binding=Method.parse_binding(fm.group(2)),
+                          access=Method.parse_access(fm.group(1), default=Method.ACCESS.PACKAGE),
+                          throws=[s.strip() for s in throw_str.split(',')] if throw_str else None)
 
 
 class JavaImport(Import, LanguageSpecificParser):

@@ -92,9 +92,19 @@ class SourceFile(File, FileTokenizer):
         self.load_content()
 
     def __unicode__(self):
-        msg = u'%s SourceFile: %d imports, %d classes, %d functions'
+        msg = u'{lang} SourceFile: {content}'
         lng = Language.display_name[self.language]
-        return msg % (lng, len(self.imports), len(self.classes), len(self.functions))
+        contents = []
+        if self.imports:
+            contents.append(u'{0} imports'.format(len(self.imports)))
+        if self.globals:
+            contents.append(u'{0} globals'.format(len(self.globals)))
+        if self.functions:
+            contents.append(u'{0} functions'.format(len(self.functions)))
+        if self.classes:
+            contents.append(u'{0} classes'.format(len(self.classes)))
+        contents = u', '.join(contents) if contents else u'empty'
+        return msg.format(lang=lng, content=contents)
 
     def __str__(self):
         return unicode(self)
@@ -116,30 +126,45 @@ class SourceFile(File, FileTokenizer):
     #  Parsing Utilities  #
     #######################
     def find_context_top(self, cond=None, default=None):
+        """
+            :rtype : inspector.parser.base.Token
+        """
         if cond is None:
-            return self._context[-1][0] if self._context else default
+            return self._context[-1] if self._context else default
         for c in reversed(self._context):
             if cond(c):
                 return c
         return default
 
+    def context_pop(self):
+        self._last_popped = self._context.pop()
+        return self._last_popped
+
     def next_token(self):
         raise NotImplementedError()
+
+    def _save_model(self, token_model):
+        if isinstance(token_model, Import):
+            self.imports.append(token_model)
+        elif isinstance(token_model, Class):
+            self.classes.append(token_model)
+        elif isinstance(token_model, Function):
+            self.functions.append(token_model)
+        else:
+            self.globals.append(token_model)
 
     def _parse(self):
         """ Extract SourceFile data by parsing the code, result is saved in object's attributes.
         """
         self._context = []
+        self._last_popped = None
         while self.can_read():
-            t = self.next_token()
-            if self.find_context_top(cond=lambda x: x.isinstance(CodeBlock)) is None:
-                self.globals.append(t.model)
-            elif t.isinstance(Import):
-                self.imports.append(t.model)
-            elif t.isinstance(Class):
-                self.classes.append(t.model)
-            elif t.isinstance(Function) and not t.isinstance(Method):
-                self.functions.append(t.model)
+            token = self.next_token()
+            if token.model is None:
+                continue
+            if self.find_context_top(cond=lambda x: x != token and x.isinstance(CodeBlock)) is None:
+                # this token model has no parents, we must save it separately
+                self._save_model(token.model)
 
     @staticmethod
     def build_source_file(filename):
@@ -170,7 +195,7 @@ class Import(object):
         self.import_str = import_str
 
     def __unicode__(self):
-        return 'Import {0}'.format(self.import_str)
+        return 'Import: {0}'.format(self.import_str)
 
     def __str__(self):
         return unicode(self)
@@ -187,13 +212,15 @@ class CodeBlock(object):
         self.statements.append(statement)
 
 
-class Class(object):
+class Class(CodeBlock):
     def __init__(self, name, source_file=None, package=None, parent_class=None, extends=None):
+        super(Class, self).__init__()
         self.name = name
         self.parent_class = parent_class
         self.source_file = source_file
         self.package = package
         self.methods = []
+        self.fields = []
         if not extends:
             self.extends = []
         else:
@@ -208,13 +235,17 @@ class Class(object):
     def __str__(self):
         return unicode(self)
 
+    def add_statement(self, statement):
+        # TODO: model and check fields
+        self.fields.append(statement)
+
 
 class Function(CodeBlock):
     def __init__(self, name, return_type=None, arguments=None):
         super(Function, self).__init__()
         self.name = name
         self.arguments = arguments or []
-        self.return_type = return_type or ''
+        self.return_type = return_type or None
         self.binding = Method.BINDING.UNBOUND
         self.starting_line = None
         self.ending_line = None
@@ -249,9 +280,11 @@ class Method(Function):
         abs_rep = u' Abstract' if self.abstract else ''
         bin_rep = (u' ' + self.BINDING.display_name[self.binding]) if self.binding != self.BINDING.INSTANCE else u''
         thr_rep = (u', throws ' + u', '.join(self.throws)) if self.throws else u''
-        fmt = u'{acc}{abs}{bin} Method {name}({args}): {ret} {thr}'
-        return fmt.format(acc=acc_rep, abs=abs_rep, bin=bin_rep, name=self.name, args=args_rep, ret=self.return_type,
-                          thr=thr_rep)
+        ret_name = u': ' + self.return_type if not self.is_constructor() else u''
+        method_name = u'Method' if not self.is_constructor() else u'Constructor'
+        fmt = u'{acc}{abs}{bin} {method_name} {name}({args}){ret} {thr}'
+        return fmt.format(acc=acc_rep, abs=abs_rep, bin=bin_rep, name=self.name, args=args_rep, ret=ret_name,
+                          thr=thr_rep, method_name=method_name)
 
     def set_parent_class(self, parent_class):
         """
@@ -261,6 +294,9 @@ class Method(Function):
             self.parent_class.methods.remove(self)
         self.parent_class = parent_class
         parent_class.methods.append(self)
+
+    def is_constructor(self):
+        return self.return_type is None
 
     @classmethod
     def parse_access(cls, access_str, default=None):
@@ -364,9 +400,18 @@ class ExceptionBlock(CodeBlock):
 
     def add_statement(self, statement):
         if self.active_catch is not None:
-            self.catches[self.active_catch].append(statement)
+            self.catches[self.active_catch].add_statement(statement)
         else:
             super(ExceptionBlock, self).add_statement(statement)
+
+    def __unicode__(self):
+        catches = u','.join(self.catches.keys())
+        if not catches:
+            catches = u'nothing'
+        return u'ExceptionBlock: {0} statements, catching {1}.'.format(len(self.statements), catches)
+
+    def __str__(self):
+        return unicode(self)
 
 
 class ForBlock(CodeBlock):

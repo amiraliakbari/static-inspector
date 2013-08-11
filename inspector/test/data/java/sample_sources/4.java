@@ -4,14 +4,6 @@ interface Lookup {
     Object find(String name);
 }
 
-void processValues(String[] names, Lookup table) {
-   for (int i = 0; i ! names.length; i++) {
-       Object value = table.find(names[i]);
-       if (value != null)
-          processValue(names[i], value);
-   }
-}
-
 class SimpleLookup implements Lookup {
    private String[] Names;
    private Object[] Values;
@@ -24,4 +16,12 @@ class SimpleLookup implements Lookup {
       return null; // not found
    }
    // ...
+
+   void processValues(String[] names, Lookup table) {
+       for (int i = 0; i ! names.length; i++) {
+           Object value = table.find(names[i]);
+           if (value != null)
+              processValue(names[i], value);
+       }
+    }
 }

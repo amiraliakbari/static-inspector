@@ -49,6 +49,15 @@ class FileTokenizer(object):
             self.next_char()
 
     def read(self, length=None, to=None, cond=None, find=None, beyond=0):
+        """ Read and return a number of chars from current head location
+
+            :param int length: count of chars to be read
+            :param int to: index in file to read char up to it
+            :param cond: all consecutive chars with cond(ch)==True will be read
+            :param find: substring to read up to it
+            :param int beyond: this number of additional char will read and added to the result, defaults to 0
+            :rtype: str
+        """
         if length is not None:
             length += beyond
             self.next_char(skip=length - 1)

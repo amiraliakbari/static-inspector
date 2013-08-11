@@ -4,6 +4,7 @@ import re
 
 from inspector.models.consts import Language
 from inspector.parser.file_tokenizer import FileTokenizer
+from inspector.utils.arrays import find
 from inspector.utils.lang import enum
 from inspector.utils.strings import summarize
 
@@ -122,6 +123,15 @@ class SourceFile(File, FileTokenizer):
         self.set_content(self.file_content)
         self._parse()
 
+    ##########################
+    #  Model Access Helpers  #
+    ##########################
+    def get_class(self, name):
+        """
+            :rtype: Class
+        """
+        return find(self.classes, lambda m: m.name == name)
+
     #######################
     #  Parsing Utilities  #
     #######################
@@ -137,6 +147,9 @@ class SourceFile(File, FileTokenizer):
         return default
 
     def context_pop(self):
+        """
+            :rtype: inspector.parser.base.Token
+        """
         self._last_popped = self._context.pop()
         return self._last_popped
 
@@ -204,12 +217,20 @@ class Import(object):
 class CodeBlock(object):
     def __init__(self):
         self.statements = []  # array of Statement
+        self.starting_line = None
+        self.ending_line = None
 
     def add_statement(self, statement):
         """
             :param Statement statement: statement to be added
         """
         self.statements.append(statement)
+
+    @property
+    def line_count(self):
+        if self.ending_line is None or self.starting_line is None:
+            return None
+        return self.ending_line - self.starting_line + 1
 
 
 class Class(CodeBlock):
@@ -239,6 +260,12 @@ class Class(CodeBlock):
         # TODO: model and check fields
         self.fields.append(statement)
 
+    def get_method(self, name):
+        """
+            :rtype: Method
+        """
+        return find(self.methods, lambda m: m.name == name)
+
 
 class Function(CodeBlock):
     def __init__(self, name, return_type=None, arguments=None):
@@ -247,8 +274,6 @@ class Function(CodeBlock):
         self.arguments = arguments or []
         self.return_type = return_type or None
         self.binding = Method.BINDING.UNBOUND
-        self.starting_line = None
-        self.ending_line = None
 
     def __unicode__(self):
         args_rep = u', '.join([u'{0} {1}'.format(x, y) for x, y in self.arguments])
@@ -324,10 +349,12 @@ class Method(Function):
 class Comment(object):
     def __init__(self, content):
         """
-            :param basestring content: comment content, including // or /* */
+            :param str or unicode content: comment content, including // or /* */
         """
         self.content = content
         self.doc_comment = self.content.startswith(u'/**')
+        self.starting_line = None
+        self.ending_line = None
 
         if self.content.startswith('//'):
             self.multiline = False
@@ -428,4 +455,3 @@ class DoWhileBlock(WhileBlock):
 
 class WithBlock(CodeBlock):
     pass
-

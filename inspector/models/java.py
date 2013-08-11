@@ -3,7 +3,8 @@ import os
 import re
 
 from inspector.parser.base import Token, LanguageSpecificParser
-from inspector.models.base import Project, SourceFile, Class, Method, Import, Comment, Statement, ExceptionBlock, CodeBlock, ForBlock, WhileBlock, IfBlock, Function
+from inspector.models.base import (Project, SourceFile, Class, Method, Import, Comment, Statement, ExceptionBlock,
+                                   CodeBlock, ForBlock, WhileBlock, IfBlock)
 from inspector.models.consts import Language
 from inspector.models.exceptions import ParseError
 from inspector.utils.lang import enum
@@ -72,12 +73,19 @@ class JavaSourceFile(SourceFile):
         prefix = self.read_ahead(2)  # to detect comments
         if prefix == '//':
             t.type = 'comment'
+            l1 = self._cur_line
             t.content = self.read(cond=lambda ch: ch != '\n')
             t.model = Comment(t.content)
+            t.model.starting_line = l1
+            t.model.ending_line = l1
         elif prefix == '/*':
             t.type = 'comment'
+            l1 = self._cur_line
             t.content = self.read(find='*/', beyond=2)
+            l2 = self._cur_line
             t.model = Comment(t.content)
+            t.model.starting_line = l1
+            t.model.ending_line = l2
 
         else:
 
@@ -95,7 +103,9 @@ class JavaSourceFile(SourceFile):
                             return False
                     return True
 
+            l1 = self._cur_line
             t.content = self.read(cond=IsNotBreaking())  # TODO: count () here
+            l2 = self._cur_line
             ch = self.next_char()
             if ch == '}':
                 if t.content.strip():
@@ -105,7 +115,9 @@ class JavaSourceFile(SourceFile):
 
                 # context
                 try:
-                    self.context_pop()
+                    tmp = self.context_pop()
+                    if tmp.isinstance(CodeBlock):
+                        tmp.model.ending_line = l2
                 except IndexError:
                     raise ParseError(u'Unmatched }.')
 
@@ -162,6 +174,11 @@ class JavaSourceFile(SourceFile):
                     if not t.model:
                         t.model = JavaClass.try_parse(t.content, {u'parent_class': parent_class})
                     if not t.model:
+                        t.model = JavaSynchronizedBlock.try_parse(t.content)
+                        if t.model:
+                            top = self.find_context_top(lambda x: x.isinstance(CodeBlock))
+                            top.model.add_statement(t.model)  # TODO: this makes problems! (because of type)
+                    if not t.model:
                         t.model = JavaInterface.try_parse(t.content, {u'parent_class': parent_class})
                     if not t.model:
                         t.model = JavaMethod.try_parse(t.content, {u'parent_class': parent_class})
@@ -173,6 +190,8 @@ class JavaSourceFile(SourceFile):
                 if repush:
                     self._context.append(self._last_popped)
                 elif push:
+                    if t.isinstance(CodeBlock):
+                        t.model.starting_line = l1
                     self._context.append(t)
 
             elif ch == ';':
@@ -308,10 +327,16 @@ class JavaMethod(Method, LanguageSpecificParser):
                 return '?', s
             return s[:si], s[si + 1:]
 
+        method_name = fm.group(5)
         throw_str = fm.group(7)
         args_str = fm.group(6)
+
+        # method name can not be a reserved word
+        if method_name in ['synchronized']:
+            return None
+
         return JavaMethod(parent_class,
-                          name=fm.group(5),
+                          name=method_name,
                           arguments=[split_arg(s) for s in args_str.split(',')] if args_str else [],
                           return_type=fm.group(4),
                           synchronized=fm.group(3),
@@ -344,3 +369,22 @@ class JavaStatement(Statement, LanguageSpecificParser):
         """
         # TODO: any checks required?
         return Statement(string)
+
+
+class JavaSynchronizedBlock(CodeBlock, LanguageSpecificParser):
+    SYNC_BLOCK_RE = re.compile(r'^synchronized\s*(\((?:\s|\w|[,.])+\))?\s*$')
+
+    def __init__(self, locked_values=None):
+        super(JavaSynchronizedBlock, self).__init__()
+        self.locked_values = locked_values
+
+    @classmethod
+    def try_parse(cls, string, opts=None):
+        """
+            :param str or unicode string: code to be parsed
+            :rtype: Statement
+        """
+        sb = cls.SYNC_BLOCK_RE.match(string)
+        if sb:
+            return JavaSynchronizedBlock(locked_values=sb.group(1))
+        return None

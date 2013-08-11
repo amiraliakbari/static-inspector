@@ -7,6 +7,7 @@ class Point {
       y = y_value;
    }
    public void clear() {
+      // to be overridden
       this.x = 0;
       this.y = 0;
    }

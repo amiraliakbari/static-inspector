@@ -5,12 +5,18 @@ from inspector.models.base import SourceFile
 
 
 # TODO: test details!
+from inspector.models.consts import Language
+
+
 class TestJavaParse(unittest.TestCase):
     def setUp(self):
         self.data_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data', 'java')
 
     def test_parse_1(self):
         sf = SourceFile.build_source_file(os.path.join(self.data_path, 'sample_sources', '1.java'))
+        self.assertTrue(sf.language_detected)
+        self.assertEqual(sf.language, Language.JAVA)
+        self.assertTrue(sf.parsed)
         self.assertEqual(unicode(sf), u'Java SourceFile: 1 imports, 1 classes')
         self.assertEqual(sf.next_token(), None)
         c1 = sf.get_class('MyFirstProgram')

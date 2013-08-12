@@ -78,9 +78,10 @@ class SourceFile(File, FileTokenizer):
         super(SourceFile, self).__init__(filename)
         FileTokenizer.__init__(self)
         self.package = package
-        self.language = language if language is not None else self.detect_language()
+        self._language = language if language is not None else self.detect_language()
 
         # parse results
+        self.parsed = False
         self.imports = []
         self.globals = []
         self.classes = []
@@ -114,6 +115,19 @@ class SourceFile(File, FileTokenizer):
     def project(self):
         return self.package.project if self.package else None
 
+    @property
+    def language(self):
+        return self._language
+
+    @language.setter
+    def language(self, value):
+        if self._language == value:
+            return
+        self._language = value
+        if self.language_detected:
+            # TODO: this does not change this class parser, so _parse() is useless
+            self._parse()
+
     def get_abs_path(self):
         pkg_abs = self.package.get_abs_path() if self.package else ''
         return os.path.join(pkg_abs, self.filename)
@@ -121,7 +135,8 @@ class SourceFile(File, FileTokenizer):
     def load_content(self):
         super(SourceFile, self).load_content()
         self.set_content(self.file_content)
-        self._parse()
+        if self.language_detected:
+            self._parse()
 
     ##########################
     #  Model Access Helpers  #
@@ -135,6 +150,10 @@ class SourceFile(File, FileTokenizer):
     #######################
     #  Parsing Utilities  #
     #######################
+    @property
+    def language_detected(self):
+        return self.language and self.language != Language.UNKNOWN
+
     def find_context_top(self, cond=None, default=None):
         """
             :rtype : inspector.parser.base.Token
@@ -178,6 +197,7 @@ class SourceFile(File, FileTokenizer):
             if self.find_context_top(cond=lambda x: x != token and x.isinstance(CodeBlock)) is None:
                 # this token model has no parents, we must save it separately
                 self._save_model(token.model)
+        self.parsed = True
 
     @staticmethod
     def build_source_file(filename):

@@ -14,7 +14,9 @@ class HandleXml(xml.sax.ContentHandler):
         if name == 'package':
             self.package = attributes['name']
         elif self.package is not None and name == 'sourcefile':
-            self.cur_file = FileCoverageReport(attributes['name'], package=self.package)
+            package = self.package.replace('.', '/').replace('\\', '/').strip()
+            path = package + ('/' if package else '') + attributes['name']
+            self.cur_file = FileCoverageReport(source_file=path)
         elif self.cur_file and name == 'line':
             if int(attributes['ci']) > 0:
                 self.cur_file.cover_line(int(attributes['nr']))

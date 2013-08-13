@@ -21,6 +21,13 @@ class Project(LocatableInterface):
         self.abs_path = path
         self.name = name if name is not None else re.split(r'[/\\]', self.abs_path)[-1]
 
+        # files
+        self._files = {}  # loaded files cache
+        self._file_groups = {}
+
+    #########################
+    #  File System Related  #
+    #########################
     def get_abs_path(self):
         return self.abs_path
 
@@ -34,6 +41,51 @@ class Project(LocatableInterface):
             raise ValueError('The path is not in project directory.')
         return abs_path[len(self.abs_path):]
 
+    ###################
+    #  File Handling  #
+    ###################
+    def rescan_files(self):
+        for r, d, files in os.walk(self.get_abs_path()):
+            for f in files:
+                path = self.build_relative_path(os.path.join(r, f))
+                ext = os.path.splitext(path)[1][1:]
+                self._files[path] = None
+                if not ext in self._file_groups:
+                    self._file_groups[ext] = []
+                self._file_groups[ext].append(path)
+
+    def filter_files(self, cond):
+        """ Return filenames of files in this project that satisfy the condition function
+        """
+        return (f for f in self._files.iterkeys() if cond(f))
+
+    def get_file(self, path):
+        """
+            :param str path: source file path, can be relative, abstract, or in java dotted format
+        """
+        #if re.match(r'[a-zA-Z0-9._]+', path):
+        #    # java dotted format
+        #    rel_path = os.path.join(*path.split('.'))
+        #else:
+        #    rel_path = self.build_relative_path(path)
+        rel_path = self.build_relative_path(path)
+
+        # file cache
+        f = self._files[rel_path]
+        if f is None:
+            f = self._files[rel_path] = self.load_file(rel_path)
+            f.project_path = rel_path
+        return f
+
+    def get_files(self, filenames):
+        return (self.get_file(filename) for filename in filenames)
+
+    ############################
+    #  File Loading & Parsing  #
+    ############################
+    def load_file(self, rel_path):
+        return File(self.build_path(rel_path))
+
 
 class Package(LocatableInterface):
     def __init__(self, project):
@@ -45,14 +97,27 @@ class Package(LocatableInterface):
 
 
 class File(LocatableInterface):
-    def __init__(self, filename):
+    def __init__(self, filename, preload=False):
         self.file_content = None
+        self._lines = None
         self.filename = filename
+        self.project_path = None
+
+        # setup
+        if preload:
+            self.load_content()
 
     def get_abs_path(self):
         return self.filename
 
-    def load_content(self):
+    @property
+    def loaded(self):
+        return self.file_content is not None
+
+    # noinspection PyShadowingBuiltins
+    def load_content(self, reload=True):
+        if not reload and self.loaded:
+            return
         with open(self.get_abs_path(), 'r') as f:
             self.file_content = f.read()
 
@@ -63,6 +128,25 @@ class File(LocatableInterface):
         elif ext == '.py':
             return Language.PYTHON
         return Language.UNKNOWN
+
+    #####################
+    #  Line Processing  #
+    #####################
+    def get_line(self, line_number):
+        if self._lines is None:
+            self.load_content(reload=False)
+            self._lines = self.file_content.split('\n')
+        ln = self._lines[line_number - 1]
+        if ln.endswith('\r'):
+            ln = ln[:-1]
+        return ln
+
+    @property
+    def lines_count(self):
+        if self._lines:
+            return len(self._lines)
+        self.load_content(reload=False)
+        return self.file_content.count('\n') + 1
 
 
 class Directory(LocatableInterface):
@@ -132,8 +216,11 @@ class SourceFile(File, FileTokenizer):
         pkg_abs = self.package.get_abs_path() if self.package else ''
         return os.path.join(pkg_abs, self.filename)
 
-    def load_content(self):
-        super(SourceFile, self).load_content()
+    # noinspection PyShadowingBuiltins
+    def load_content(self, reload=True):
+        if not reload and self.loaded:
+            return
+        super(SourceFile, self).load_content(reload=reload)
         self.set_content(self.file_content)
         if self.language_detected:
             self._parse()
@@ -216,9 +303,13 @@ class SourceFile(File, FileTokenizer):
     ##############
     #  Coverage  #
     ##############
+    def covered_ratio(self):
+        return 1. * self.coverage.covered_lines_count / self.lines_count
+
     def attach_coverage_report(self, report):
         """
-            :param inspector.coverage.raw_coverage_report.FileCoverageReport: coverage report to be attached
+            :param report: coverage report to be attached
+            :type report: inspector.coverage.raw_coverage_report.FileCoverageReport or None
         """
         self.coverage = report
 

@@ -14,11 +14,9 @@ class JavaProject(Project):
     def __init__(self, path, name=None):
         super(JavaProject, self).__init__(path, name=name)
         self.source_roots = []
-        self._files = {}  # parsed SourceFile cache
 
         # initial configuration
         self.auto_detect_roots()
-        self.rescan_files()
 
     def auto_detect_roots(self):
         if os.path.isdir(self.build_path('src')):
@@ -26,29 +24,8 @@ class JavaProject(Project):
         else:
             self.source_roots.append('')
 
-    def rescan_files(self):
-        for root in self.source_roots:
-            for r, d, files in os.walk(self.build_path(root)):
-                for f in files:
-                    if f.endswith('.java'):
-                        path = self.build_relative_path(os.path.join(r, f))
-                        self._files[path] = None
-
-    def get_source_file(self, path):
-        """
-            :param str path: source file path, can be relative, abstract, or in java dotted format
-        """
-        if re.match(r'[a-zA-Z0-9._]+', path):
-            # java dotted format
-            rel_path = os.path.join(*path.split('.'))
-        else:
-            rel_path = self.build_relative_path(path)
-
-        # file cache
-        f = self._files[rel_path]
-        if f is None:
-            f = self._files[rel_path] = JavaSourceFile(self.build_path(rel_path), package=None)  # TODO: package
-        return f
+    def load_file(self, rel_path):
+        return JavaSourceFile(self.build_path(rel_path), package=None)  # TODO: package
 
 
 class JavaSourceFile(SourceFile):

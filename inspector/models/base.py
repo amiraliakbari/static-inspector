@@ -19,11 +19,15 @@ class Project(LocatableInterface):
         if not path[-1] in ['/', '\\']:
             path = os.path.join(path, '')  # append /
         self.abs_path = path
-        self.name = name if name is not None else re.split(r'[/\\]', self.abs_path)[-1]
+        self.name = name if name is not None else re.split(r'[/\\]', self.abs_path)[-2]
+        self.source_roots = []
 
         # files
         self._files = {}  # loaded files cache
         self._file_groups = {}
+
+        # initial configuration
+        self.auto_detect_roots()
 
     #########################
     #  File System Related  #
@@ -59,16 +63,25 @@ class Project(LocatableInterface):
         """
         return (f for f in self._files.iterkeys() if cond(f))
 
-    def get_file(self, path):
+    def get_file(self, path, is_qualified=False):
         """
             :param str path: source file path, can be relative, abstract, or in java dotted format
         """
-        #if re.match(r'[a-zA-Z0-9._]+', path):
-        #    # java dotted format
-        #    rel_path = os.path.join(*path.split('.'))
-        #else:
-        #    rel_path = self.build_relative_path(path)
-        rel_path = self.build_relative_path(path)
+        if is_qualified:
+           # java dotted format
+            found = False
+            rel_path = os.path.join(*path.split('.'))
+            print rel_path
+            for sr in self.source_roots:
+                print os.path.join(sr, rel_path)
+                if os.path.join(sr, rel_path) + '.java' in self._files:
+                    rel_path = os.path.join(sr, rel_path) + '.java'
+                    found = True
+                    break
+            if not found:
+                raise KeyError('File not found in project source roots ({0}).'.format(unicode(self.source_roots)))
+        else:
+            rel_path = self.build_relative_path(path)
 
         # file cache
         f = self._files[rel_path]
@@ -85,6 +98,12 @@ class Project(LocatableInterface):
     ############################
     def load_file(self, rel_path):
         return File(self.build_path(rel_path))
+
+    def auto_detect_roots(self):
+        if os.path.isdir(self.build_path('src')):
+            self.source_roots.append('src')
+        else:
+            self.source_roots.append('')
 
 
 class Package(LocatableInterface):
@@ -157,9 +176,47 @@ class Directory(LocatableInterface):
         return self.path
 
 
-class SourceFile(File, FileTokenizer):
+class Coverable(object):
+    def __init__(self):
+        self._coverage = None
+
+    @property
+    def coverage(self):
+        if self._coverage is None:
+            self.autoload_coverage_report()
+        if self._coverage is None:
+            raise ValueError('No coverage data attached.')
+        return self._coverage
+
+    @coverage.setter
+    def coverage(self, value):
+        self._coverage = value
+
+    @property
+    def lines_count(self):
+        """
+            :rtype: int
+        """
+        raise NotImplementedError
+
+    def covered_ratio(self):
+        return 1. * self.coverage.covered_lines_count / self.lines_count
+
+    def attach_coverage_report(self, report):
+        """
+            :param report: coverage report to be attached
+            :type report: inspector.coverage.raw_coverage_report.FileCoverageReport or None
+        """
+        self.coverage = report
+
+    def autoload_coverage_report(self):
+        pass
+
+
+class SourceFile(File, FileTokenizer, Coverable):
     def __init__(self, filename, package=None, language=None):
         super(SourceFile, self).__init__(filename)
+        Coverable.__init__(self)
         FileTokenizer.__init__(self)
         self.package = package
         self._language = language if language is not None else self.detect_language()
@@ -170,9 +227,6 @@ class SourceFile(File, FileTokenizer):
         self.globals = []
         self.classes = []
         self.functions = []
-
-        # coverage
-        self.coverage = None
 
         # loading and parsing
         self.load_content()
@@ -300,19 +354,6 @@ class SourceFile(File, FileTokenizer):
             return python.PythonSourceFile(filename, package=package)
         raise ValueError('Unknown language')
 
-    ##############
-    #  Coverage  #
-    ##############
-    def covered_ratio(self):
-        return 1. * self.coverage.covered_lines_count / self.lines_count
-
-    def attach_coverage_report(self, report):
-        """
-            :param report: coverage report to be attached
-            :type report: inspector.coverage.raw_coverage_report.FileCoverageReport or None
-        """
-        self.coverage = report
-
 
 class Import(object):
     def __init__(self, import_str):
@@ -325,8 +366,10 @@ class Import(object):
         return unicode(self)
 
 
-class CodeBlock(object):
+class CodeBlock(Coverable):
     def __init__(self):
+        Coverable.__init__(self)
+        self.parent_block = None
         self.statements = []  # array of Statement
         self.starting_line = None
         self.ending_line = None
@@ -338,17 +381,33 @@ class CodeBlock(object):
         self.statements.append(statement)
 
     @property
-    def line_count(self):
+    def lines_count(self):
         if self.ending_line is None or self.starting_line is None:
             return None
         return self.ending_line - self.starting_line + 1
+
+    def autoload_coverage_report(self):
+        source = self.get_source_file()
+        if source and source.coverage:
+            self.attach_coverage_report(source.coverage[self.starting_line:self.ending_line + 1])
+
+    def get_source_file(self):
+        """ Return source file containing this block
+
+            :rtype: SourceFile
+        """
+        if hasattr(self, 'source_file'):
+            return self.source_file
+        if isinstance(self.parent_block, CodeBlock):
+            return self.parent_block.get_source_file()
+        raise NotImplementedError
 
 
 class Class(CodeBlock):
     def __init__(self, name, source_file=None, package=None, parent_class=None, extends=None):
         super(Class, self).__init__()
         self.name = name
-        self.parent_class = parent_class
+        self.parent_block = self.parent_class = parent_class
         self.source_file = source_file
         self.package = package
         self.methods = []
@@ -379,9 +438,10 @@ class Class(CodeBlock):
 
 
 class Function(CodeBlock):
-    def __init__(self, name, return_type=None, arguments=None):
+    def __init__(self, name, source_file=None, return_type=None, arguments=None):
         super(Function, self).__init__()
         self.name = name
+        self.source_file = source_file
         self.arguments = arguments or []
         self.return_type = return_type or None
         self.binding = Method.BINDING.UNBOUND
@@ -429,6 +489,8 @@ class Method(Function):
         if self.parent_class is not None:
             self.parent_class.methods.remove(self)
         self.parent_class = parent_class
+        self.parent_block = self.parent_class
+        self.source_file = parent_class.source_file
         parent_class.methods.append(self)
 
     def is_constructor(self):
@@ -515,7 +577,7 @@ class IfBlock(CodeBlock):
 
     def add_statement(self, statement):
         if self.mode == u'elif':
-            self.elifs[-1][1].append(statement)
+            self.elifs[-1][1].add_statement(statement)
         elif self.mode == u'else':
             self.else_block.add_statement(statement)
         else:

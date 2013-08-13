@@ -11,19 +11,6 @@ from inspector.utils.lang import enum
 
 
 class JavaProject(Project):
-    def __init__(self, path, name=None):
-        super(JavaProject, self).__init__(path, name=name)
-        self.source_roots = []
-
-        # initial configuration
-        self.auto_detect_roots()
-
-    def auto_detect_roots(self):
-        if os.path.isdir(self.build_path('src')):
-            self.source_roots.append('src')
-        else:
-            self.source_roots.append('')
-
     def load_file(self, rel_path):
         return JavaSourceFile(self.build_path(rel_path), package=None)  # TODO: package
 
@@ -188,12 +175,13 @@ class JavaSourceFile(SourceFile):
                 t.model = JavaImport.try_parse(t.content)
                 if not t.model:
                     t.model = JavaStatement.try_parse(t.content)
-                    if t.model and not is_special_statement:
-                        ct = self.find_context_top()
-                        if ct.isinstance(CodeBlock):
-                            ct.model.add_statement(t.model)
-                        else:
-                            raise ParseError(u'Statement is not in a block: {0}.'.format(t.model))
+                    if t.model:
+                        if not is_special_statement:
+                            ct = self.find_context_top()
+                            if ct.isinstance(CodeBlock):
+                                ct.model.add_statement(t.model)
+                            else:
+                                raise ParseError(u'Statement is not in a block: {0}.'.format(t.model))
                     else:
                         raise ParseError(u'Invalid statement: "{0}"'.format(t.content))
 
@@ -207,6 +195,8 @@ class JavaSourceFile(SourceFile):
         self.skip_spaces()
         if t:
             t.normalize_content()
+            if hasattr(t.model, 'source_file'):
+                t.model.source_file = self
         return t
 
     def _save_model(self, token_model):

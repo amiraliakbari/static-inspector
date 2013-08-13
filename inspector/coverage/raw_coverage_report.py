@@ -54,6 +54,16 @@ class FileCoverageReport(object):
         # TODO: also consider exec_info
         return result
 
+    def __getitem__(self, item):
+        """
+            :type item: slice
+        """
+        if not isinstance(item, slice):  # TODO: also check step to be 1
+            raise TypeError
+        r = FileCoverageReport(source_file=self.source_file)
+        r.covered_lines = set(x for x in self.covered_lines if item.start <= x < item.stop)
+        return r
+
     def __unicode__(self):
         return self.format_line_range(self.covered_lines)
 
@@ -106,7 +116,9 @@ class ProjectCoverageReport(object):
         self.files = {}
 
     def add_coverage_report(self, file_report):
-        self.files[file_report.filename] = file_report
+        if not file_report.source_file:
+            raise ValueError('Project coverage reports must have a valid filename.')
+        self.files[file_report.source_file] = file_report
 
     def get_reports(self):
         return self.files.itervalues()

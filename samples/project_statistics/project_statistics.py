@@ -1,15 +1,16 @@
 # -*- coding: utf-8 -*-
+import os
+
 from inspector.models.base import Project
 
 if __name__ == '__main__':
-
-    projects = [
-        '/data/code/android/github-android',
-        '/data/code/android/linphone-android',
-        '/data/code/android/vlc/vlc-android',
-    ]
+    # configs
+    PROJECTS_PATH = '/data/code/android'
+    projects = ['github-android', 'linphone-android', 'vlc/vlc-android', 'mytracks/MyTracks']
     exts = ['java', 'xml']
+
     for project_dir in projects:
+        project_dir = os.path.join(PROJECTS_PATH, project_dir)
         print '========================='
         print ' Project Analysis Report '
         print '========================='

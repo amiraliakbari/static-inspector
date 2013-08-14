@@ -7,7 +7,7 @@ if __name__ == '__main__':
     # configs
     PROJECTS_PATH = '/data/code/android'
     projects = ['github-android', 'linphone-android', 'vlc/vlc-android', 'mytracks/MyTracks']
-    exts = ['java', 'xml']
+    exts = ['java', 'xml', 'c']
 
     for project_dir in projects:
         project_dir = os.path.join(PROJECTS_PATH, project_dir)

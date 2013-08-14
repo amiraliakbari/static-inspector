@@ -71,9 +71,7 @@ class Project(LocatableInterface):
            # java dotted format
             found = False
             rel_path = os.path.join(*path.split('.'))
-            print rel_path
             for sr in self.source_roots:
-                print os.path.join(sr, rel_path)
                 if os.path.join(sr, rel_path) + '.java' in self._files:
                     rel_path = os.path.join(sr, rel_path) + '.java'
                     found = True

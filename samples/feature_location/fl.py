@@ -13,7 +13,6 @@ if __name__ == '__main__':
 
     p = JavaProject(project_dir)
     p.rescan_files()
-    print len(p._files)
     dyna_features = p.filter_files(cond=lambda s: s.startswith('fl_coverage/') and s.endswith('_a.xml'))
 
     print '==========================='

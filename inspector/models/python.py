@@ -10,4 +10,7 @@ class PythonProject(Project):
 class PythonSourceFile(SourceFile):
     def __init__(self, filename, package=None):
         super(PythonSourceFile, self).__init__(filename, package=package)
-        self.language = Language.PYTHON
+
+    @property
+    def language(self):
+        return Language.PYTHON

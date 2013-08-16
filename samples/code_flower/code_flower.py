@@ -3,7 +3,8 @@ import json
 import os
 import sys
 
-from inspector.models.java import JavaProject
+from inspector.analyzer.project_analyzer import LocCounter
+from inspector.models.base import Project
 
 
 if __name__ == '__main__':
@@ -12,22 +13,20 @@ if __name__ == '__main__':
     else:
         project_dir = sys.argv[1]
 
-    p = JavaProject(project_dir)
-    p.rescan_files()
-
-    data = {'name': 'Project: ' + p.name, 'children': []}
+    hnd = LocCounter()
+    p = Project(project_dir)
+    p.ignored_dirs = ['.git', 'bin', '.settings', '.idea']
+    p.rescan_files(hnd)
 
     params = {
         'width': 750,
         'height': 500,
-        'data': json.dumps(data),
+        'data': json.dumps(hnd.get_data()),
     }
     html = """<html>
     <head>
         <script type="text/javascript" src="http://code.jquery.com/jquery-1.10.1.min.js"></script>
-        <script type="text/javascript" src="http://redotheweb.com/CodeFlower/javascripts/d3/d3.js"></script>
-        <script type="text/javascript" src="http://redotheweb.com/CodeFlower/javascripts/d3/d3.geom.js"></script>
-        <script type="text/javascript" src="http://redotheweb.com/CodeFlower/javascripts/d3/d3.layout.js"></script>
+        <script type="text/javascript" src="http://cdnjs.cloudflare.com/ajax/libs/d3/3.2.2/d3.min.js"></script>
         <script type="text/javascript" src="http://redotheweb.com/CodeFlower/javascripts/CodeFlower.js"></script>
         <style>
             circle.node {

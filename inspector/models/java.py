@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-import os
 import re
 
 from inspector.parser.base import Token, LanguageSpecificParser
@@ -12,19 +11,30 @@ from inspector.utils.lang import enum
 
 class JavaProject(Project):
     def load_file(self, rel_path):
-        return JavaSourceFile(self.build_path(rel_path), package=None)  # TODO: package
+        """
+            :rtype: JavaSourceFile or SourceFile
+        """
+        # TODO: determine package
+        abs_path = self.build_path(rel_path)
+        if rel_path.endswith('.java'):
+            return JavaSourceFile(abs_path, package=None)
+        return SourceFile(abs_path, package=None)
 
 
 class JavaSourceFile(SourceFile):
     def __init__(self, filename, package=None):
         self.interfaces = []
-        super(JavaSourceFile, self).__init__(filename, package=package, language=Language.JAVA)
+        super(JavaSourceFile, self).__init__(filename, package=package)
 
     def __unicode__(self):
         u = super(JavaSourceFile, self).__unicode__()
         if self.interfaces:
             u += u', {0} interfaces'.format(len(self.interfaces))
         return u
+
+    @property
+    def language(self):
+        return Language.JAVA
 
     def next_token(self):
         """

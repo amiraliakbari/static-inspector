@@ -21,6 +21,7 @@ class Project(LocatableInterface):
         self.abs_path = path
         self.name = name if name is not None else re.split(r'[/\\]', self.abs_path)[-2]
         self.source_roots = []
+        self.ignored_dirs = []
 
         # files
         self._files = {}  # loaded files cache
@@ -32,6 +33,7 @@ class Project(LocatableInterface):
     #########################
     #  File System Related  #
     #########################
+    # TODO: make all paths use / in the model
     def get_abs_path(self):
         return self.abs_path
 
@@ -48,8 +50,49 @@ class Project(LocatableInterface):
     ###################
     #  File Handling  #
     ###################
-    def rescan_files(self):
-        for r, d, files in os.walk(self.get_abs_path()):
+    class FileDfsHandler(object):
+        def __init__(self):
+            self.project = None
+
+        def setup(self):
+            pass
+
+        def tear_down(self):
+            pass
+
+        def handle_file(self, path):
+            pass
+
+        def enter_dir(self, path):
+            pass
+
+        def exit_dir(self, path):
+            pass
+
+    def rescan_files(self, handler=None):
+        """
+            :type handler: FileDfsHandler or None
+        """
+        dir_stack = []
+        if handler:
+            handler.project = self
+            handler.setup()
+
+        project_root = self.get_abs_path()
+        for r, d, files in os.walk(project_root):
+            dir_path = self.build_relative_path(r)
+            ignored = False
+            for ignored_dir in self.ignored_dirs:
+                if dir_path.startswith(ignored_dir):
+                    ignored = True
+                    break
+            if ignored:
+                continue
+            if handler:
+                while dir_stack and not dir_path.startswith(dir_stack[-1]):
+                    handler.exit_dir(dir_stack.pop())
+                dir_stack.append(dir_path)
+                handler.enter_dir(dir_path)
             for f in files:
                 path = self.build_relative_path(os.path.join(r, f))
                 ext = os.path.splitext(path)[1][1:]
@@ -57,6 +100,13 @@ class Project(LocatableInterface):
                 if not ext in self._file_groups:
                     self._file_groups[ext] = []
                 self._file_groups[ext].append(path)
+                if handler:
+                    handler.handle_file(path)
+
+        if handler:
+            while dir_stack:
+                handler.exit_dir(dir_stack.pop())
+            handler.tear_down()
 
     def filter_files(self, cond):
         """ Return filenames of files in this project that satisfy the condition function
@@ -91,6 +141,14 @@ class Project(LocatableInterface):
     def get_files(self, filenames):
         return (self.get_file(filename) for filename in filenames)
 
+    def dfs_files(self, handler):
+        """
+            :type handler: FileDfsHandler
+        """
+
+        self.rescan_files(handler)
+        handler.tear_down()
+
     ############################
     #  File Loading & Parsing  #
     ############################
@@ -116,6 +174,7 @@ class Package(LocatableInterface):
 class File(LocatableInterface):
     def __init__(self, filename, preload=False):
         self.file_content = None
+        self._file_size = None
         self._lines = None
         self.filename = filename
         self.project_path = None
@@ -130,6 +189,12 @@ class File(LocatableInterface):
     @property
     def loaded(self):
         return self.file_content is not None
+
+    @property
+    def file_size(self):
+        if self._file_size is None:
+            self._file_size = os.path.getsize(self.get_abs_path())
+        return self._file_size
 
     # noinspection PyShadowingBuiltins
     def load_content(self, reload=True):
@@ -150,20 +215,29 @@ class File(LocatableInterface):
     #  Line Processing  #
     #####################
     def get_line(self, line_number):
-        if self._lines is None:
-            self.load_content(reload=False)
-            self._lines = self.file_content.split('\n')
-        ln = self._lines[line_number - 1]
+        ln = self.lines[line_number - 1]
         if ln.endswith('\r'):
             ln = ln[:-1]
         return ln
 
     @property
+    def lines(self):
+        if self._lines is None:
+            self.load_content(reload=False)
+            self._lines = self.file_content.split('\n')
+        return self._lines
+
+    @property
     def lines_count(self):
+        # TODO: this functions returns 1 extra line for some files
         if self._lines:
             return len(self._lines)
         self.load_content(reload=False)
         return self.file_content.count('\n') + 1
+
+    @property
+    def chars_count(self):
+        return len(self.file_content)
 
 
 class Directory(LocatableInterface):
@@ -212,12 +286,11 @@ class Coverable(object):
 
 
 class SourceFile(File, FileTokenizer, Coverable):
-    def __init__(self, filename, package=None, language=None):
+    def __init__(self, filename, package=None):
         super(SourceFile, self).__init__(filename)
         Coverable.__init__(self)
         FileTokenizer.__init__(self)
         self.package = package
-        self._language = language if language is not None else self.detect_language()
 
         # parse results
         self.parsed = False
@@ -251,19 +324,6 @@ class SourceFile(File, FileTokenizer, Coverable):
     def project(self):
         return self.package.project if self.package else None
 
-    @property
-    def language(self):
-        return self._language
-
-    @language.setter
-    def language(self, value):
-        if self._language == value:
-            return
-        self._language = value
-        if self.language_detected:
-            # TODO: this does not change this class parser, so _parse() is useless
-            self._parse()
-
     def get_abs_path(self):
         pkg_abs = self.package.get_abs_path() if self.package else ''
         return os.path.join(pkg_abs, self.filename)
@@ -287,12 +347,20 @@ class SourceFile(File, FileTokenizer, Coverable):
         return find(self.classes, lambda m: m.name == name)
 
     #######################
-    #  Parsing Utilities  #
+    #  Language Specific  #
     #######################
     @property
-    def language_detected(self):
-        return self.language and self.language != Language.UNKNOWN
+    def language(self):
+        return self.detect_language()
 
+    @property
+    def language_detected(self):
+        lng = self.language
+        return lng and lng != Language.UNKNOWN
+
+    #######################
+    #  Parsing Utilities  #
+    #######################
     def find_context_top(self, cond=None, default=None):
         """
             :rtype : inspector.parser.base.Token

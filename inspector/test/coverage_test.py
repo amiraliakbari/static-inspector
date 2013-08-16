@@ -27,6 +27,8 @@ class TestJavaCoverage(unittest.TestCase):
         r1 = FileCoverageReport(source_file=sf)
         self.assertAlmostEqual(sf.covered_ratio(), 0)
         r1.cover_line([5, 6, 7, 8])
+        self.assertEqual(sf.coverage.covered_lines_count, 4)
+        self.assertEqual(sf.lines_count, 23)
         self.assertAlmostEqual(sf.covered_ratio(), .174, places=3)
         r1.cover_line('14-20')
         self.assertEqual(sf.coverage.covered_lines_count, 11)

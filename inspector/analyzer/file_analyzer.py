@@ -22,15 +22,28 @@ class FileAnalyzer(object):
         """
         binary = cls.is_binary(file_obj)
         if binary:
-            return file_obj.file_size / 1024
+            return file_obj.file_size / 1024, file_obj.file_size / 1024
 
         loc = file_obj.lines_count
-        if loc < cls.MIN_MAX_LOC:
-            minified = False
-            for l in file_obj.lines:
-                if len(l) > cls.MIN_LINE_LEN_THRESHOLD:
+
+        minified = False
+        if file_obj.filename.endswith('.min.js'):
+            minified = True
+        else:
+            for i in range(min(len(file_obj.lines), cls.MIN_MAX_LOC)):
+                l = file_obj.lines[i]
+                if len(l) > cls.MIN_LINE_LEN_THRESHOLD and l.count(' ') < .10 * len(l):
                     minified = True
                     break
-            if minified:
-                return file_obj.chars_count / 1000
-        return loc
+
+        dumped = False
+        if file_obj.filename.endswith('.json') or file_obj.filename.endswith('.sql'):
+            dumped = True
+
+        if dumped:
+            return file_obj.chars_count / 100, file_obj.chars_count / 100
+
+        if minified:
+            return file_obj.chars_count / 10000, file_obj.chars_count / 10000
+
+        return file_obj.chars_count, loc

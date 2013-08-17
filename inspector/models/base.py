@@ -237,6 +237,7 @@ class File(LocatableInterface):
 
     @property
     def chars_count(self):
+        self.load_content(reload=False)
         return len(self.file_content)
 
 

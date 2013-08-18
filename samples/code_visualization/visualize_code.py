@@ -39,6 +39,7 @@ if __name__ == '__main__':
         p.rescan_files(hnd)
         data = hnd.get_data()
         params['data'] = json.dumps(data)
+        params['max_level'] = 6
         params['initial_description'] = '{0} characters, {1} lines of code.'.format(data[1], data[2])
         html_template = 'pie_report.html'
     elif plot_type == 'tree':

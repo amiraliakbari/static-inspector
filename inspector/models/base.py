@@ -6,7 +6,7 @@ from inspector.models.consts import Language
 from inspector.parser.file_tokenizer import FileTokenizer
 from inspector.utils.arrays import find
 from inspector.utils.lang import enum
-from inspector.utils.strings import summarize
+from inspector.utils.strings import summarize, has_word
 
 
 class LocatableInterface(object):
@@ -117,6 +117,9 @@ class Project(LocatableInterface):
         """
             :param str path: source file path, can be relative, abstract, or in java dotted format
         """
+        if not self._files:
+            self.rescan_files()
+
         if is_qualified:
            # java dotted format
             found = False
@@ -200,8 +203,11 @@ class File(LocatableInterface):
     def load_content(self, reload=True):
         if not reload and self.loaded:
             return
+        # TODO: this is 2X memory!
         with open(self.get_abs_path(), 'r') as f:
             self.file_content = f.read()
+        with open(self.get_abs_path(), 'r') as f:
+            self._lines = f.readlines()
 
     def detect_language(self):
         ext = os.path.splitext(self.filename)[1]
@@ -224,16 +230,12 @@ class File(LocatableInterface):
     def lines(self):
         if self._lines is None:
             self.load_content(reload=False)
-            self._lines = self.file_content.split('\n')
         return self._lines
 
     @property
     def lines_count(self):
         # TODO: this functions returns 1 extra line for some files
-        if self._lines:
-            return len(self._lines)
-        self.load_content(reload=False)
-        return self.file_content.count('\n') + 1
+        return len(self.lines)
 
     @property
     def chars_count(self):
@@ -386,6 +388,7 @@ class SourceFile(File, FileTokenizer, Coverable):
     def _save_model(self, token_model):
         if isinstance(token_model, Import):
             self.imports.append(token_model)
+            token_model.source_file = self
         elif isinstance(token_model, Class):
             self.classes.append(token_model)
         elif isinstance(token_model, Function):
@@ -423,14 +426,35 @@ class SourceFile(File, FileTokenizer, Coverable):
 
 
 class Import(object):
-    def __init__(self, import_str):
+    def __init__(self, import_str, source_file=None):
+        """
+            :param SourceFile source_file: the source file this import is located in
+        """
         self.import_str = import_str
+        self.source_file = source_file
 
     def __unicode__(self):
         return 'Import: {0}'.format(self.import_str)
 
     def __str__(self):
         return unicode(self)
+
+    @property
+    def imported_identifier(self):
+        """ what identifier is made available with this import
+        """
+        return self.import_str
+
+    def find_usages(self):
+        if not self.source_file:
+            return None
+
+        identifier = self.imported_identifier
+        usage_lines = []
+        for i, l in enumerate(self.source_file._lines):
+            if has_word(l, identifier):
+                usage_lines.append(i + 1)
+        return usage_lines
 
 
 class CodeBlock(Coverable):

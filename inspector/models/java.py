@@ -217,7 +217,8 @@ class JavaSourceFile(SourceFile):
 
 
 class JavaClass(Class, LanguageSpecificParser):
-    CLASS_RE = re.compile(r'^(\w+\s+)?class\s*(\w+)(?:\s*extends\s*([a-zA-Z0-9_.]+))?(?:\s+implements\s*(.+?)\s*)?$')
+    # TODO: better detection of templates
+    CLASS_RE = re.compile(r'^(\w+\s+)?class\s*(\w+)(?:\s*extends\s*([a-zA-Z0-9_.<>]+))?(?:\s+implements\s*(.+?)\s*)?$')
     ACCESS = enum('UNKNOWN', 'PRIVATE', 'PROTECTED', 'PACKAGE', 'PUBLIC',
                   verbose_names=['unknown', 'private', 'protected', 'package', 'public'])
 
@@ -281,10 +282,12 @@ class JavaInterface(JavaClass):
 
 class JavaMethod(Method, LanguageSpecificParser):
     # TODO: initial groups may come in other orders
-    METHOD_RE = re.compile(r'^([a-z]+\s+)?(static\s+)?(synchronized\s+)?([a-zA-Z0-9_]+\s+)?(\w+)\s*\((.*)\)(?:\s*throws ([a-zA-Z0-9_.,]+))?$')
+    # TODO: better detection of templates
+    METHOD_RE = re.compile(r'^(@[a-zA-Z0-9_]+\s+)?([a-z]+\s+)?(static\s+)?(synchronized\s+)?([a-zA-Z0-9._<>]+\s+)?(\w+)\s*\((.*)\)(?:\s*throws ([a-zA-Z0-9<>_.,]+))?$')
 
     def __init__(self, *args, **kwargs):
         self.synchronized = kwargs.pop(u'synchronized', None) or False
+        self.annotations = []
         super(JavaMethod, self).__init__(*args, **kwargs)
 
     @classmethod
@@ -304,26 +307,49 @@ class JavaMethod(Method, LanguageSpecificParser):
                 return '?', s
             return s[:si], s[si + 1:]
 
-        method_name = fm.group(5)
-        throw_str = fm.group(7)
-        args_str = fm.group(6)
+        method_name = fm.group(6)
+        throw_str = fm.group(8)
+        args_str = fm.group(7)
 
         # method name can not be a reserved word
         if method_name in ['synchronized']:
             return None
 
-        return JavaMethod(parent_class,
-                          name=method_name,
-                          arguments=[split_arg(s) for s in args_str.split(',')] if args_str else [],
-                          return_type=fm.group(4),
-                          synchronized=fm.group(3),
-                          binding=Method.parse_binding(fm.group(2)),
-                          access=Method.parse_access(fm.group(1), default=Method.ACCESS.PACKAGE),
-                          throws=[s.strip() for s in throw_str.split(',')] if throw_str else None)
+        m = JavaMethod(parent_class,
+                       name=method_name,
+                       arguments=[split_arg(s) for s in args_str.split(',')] if args_str else [],
+                       return_type=fm.group(5),
+                       synchronized=fm.group(4),
+                       binding=Method.parse_binding(fm.group(3)),
+                       access=Method.parse_access(fm.group(2), default=Method.ACCESS.PACKAGE),
+                       throws=[s.strip() for s in throw_str.split(',')] if throw_str else None)
+
+        annotations = fm.group(1)
+        if annotations:
+            m.annotations.append(annotations)
+
+        return m
 
 
 class JavaImport(Import, LanguageSpecificParser):
-    IMPORT_RE = re.compile(r'^import\s*([a-zA-Z0-9._*]+);$')
+    """ Specific Model for Java imports
+
+        see:
+          * static import: http://docs.oracle.com/javase/1.5.0/docs/guide/language/static-import.html
+    """
+    IMPORT_RE = re.compile(r'^import\s+(static\s+)?([a-zA-Z0-9._*]+)\s*;$')
+
+    def __init__(self, *args, **kwargs):
+        self.is_static = kwargs.pop('is_static', False)
+        super(JavaImport, self).__init__(*args, **kwargs)
+
+    @property
+    def imported_identifier(self):
+        iden = self.import_str.split('.')[-1]
+        if iden == '*':
+            # TODO: what to do here?
+            pass
+        return iden
 
     @classmethod
     def try_parse(cls, string, opts=None):
@@ -333,7 +359,9 @@ class JavaImport(Import, LanguageSpecificParser):
         """
         im = cls.IMPORT_RE.match(string)
         if im:
-            return Import(im.group(1))
+            is_static = im.group(1) == 'static'
+            import_str = im.group(2)
+            return JavaImport(import_str, is_static=is_static)
         return None
 
 

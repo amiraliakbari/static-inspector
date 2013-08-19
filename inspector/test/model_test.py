@@ -44,6 +44,7 @@ class BaseModelTest(unittest.TestCase):
         tests_path = os.path.abspath(os.path.dirname(__file__))
         p = Project(tests_path)
         p.ignored_dirs.append('__pycache__')
+        p.ignored_dirs.append('data/android')
         hnd = TestFileDfsHandler()
         p.dfs_files(hnd)
         self.assertGreaterEqual(len(hnd.files), 11)  # counting possible pyc/... files

@@ -1,13 +1,12 @@
 # -*- coding: utf-8 -*-
 import os
 import unittest
+
 from inspector.models.base import SourceFile
-
-
-# TODO: test details!
 from inspector.models.consts import Language
 
 
+# TODO: test details!
 class TestJavaParse(unittest.TestCase):
     def setUp(self):
         self.data_path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data', 'java')

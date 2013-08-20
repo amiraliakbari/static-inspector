@@ -1,9 +1,14 @@
 # -*- coding: utf-8 -*-
 import unittest
-from inspector.utils.strings import has_word
+from inspector.utils.strings import has_word, quoted
 
 
 class StringsTest(unittest.TestCase):
+    def test_quoted(self):
+        self.assertEqual(quoted('string'), '"string"')
+        self.assertEqual(quoted('first second third'), '"first second third"')
+        self.assertEqual(quoted(u'رشته'), u'"رشته"')
+
     def test_has_word(self):
         string = 'inspector.analyzer.func()'
         self.assertTrue(has_word(string, 'inspector'))

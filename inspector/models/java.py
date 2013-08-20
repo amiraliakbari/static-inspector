@@ -78,8 +78,9 @@ class JavaSourceFile(SourceFile):
                     return True
 
             l1 = self._cur_line
-            t.content = self.read(cond=IsNotBreaking())  # TODO: count () here
+            t.content = self.read(cond=IsNotBreaking())
             l2 = self._cur_line
+            first_head = self.current_head()
             ch = self.next_char()
             if ch == '}':
                 if t.content.strip():
@@ -114,11 +115,14 @@ class JavaSourceFile(SourceFile):
                         raise ParseError(u'catch not in a try block: {0}.'.format(t.content))
 
                 # IfBlock
-                elif t.content.startswith('if'):
-                    t.model = IfBlock(t.content[2:].strip())  # TODO: remove (), etc.
+                elif t.content.startswith('if ') or t.content.startswith('if('):
+                    t.model = IfBlock(t.content[3:].strip()[:-1])
                     push = True
                 elif t.content.startswith('else'):
                     top_if = self._last_popped
+                    # for x in self._context:
+                    #     print type(x.model).__name__, x.model
+                    # print ">>>", top_if.model, type(top_if.model)
                     if top_if.isinstance(IfBlock):
                         if t.content.startswith('else if'):  # TODO: is this ok for java?
                             top_if.model.add_elif(t.content[7:].strip())  # TODO: remove (), etc.
@@ -127,7 +131,8 @@ class JavaSourceFile(SourceFile):
                             top_if.model.activate_else()
                             repush = True
                     else:
-                        raise ParseError('else not in a if block: {0}.'.format(t.content))
+                        else_code = t.content + self.read_ahead(30).replace('\n', '\\n')
+                        raise ParseError('else not in a if block: {0}...'.format(else_code))
 
                 # ForBlock
                 elif t.content.startswith('for'):
@@ -141,10 +146,13 @@ class JavaSourceFile(SourceFile):
 
                 # More complex parts (class, method)
                 else:
+                    push = True
+
                     # TODO: is it necessary to use parent_block here?
                     parent_class = self.find_context_top(lambda x: x.isinstance(Class))
                     if parent_class:
                         parent_class = parent_class.model
+
                     if not t.model:
                         t.model = JavaClass.try_parse(t.content, {u'parent_class': parent_class})
                     if not t.model:
@@ -157,13 +165,38 @@ class JavaSourceFile(SourceFile):
                     if not t.model:
                         t.model = JavaMethod.try_parse(t.content, {u'parent_class': parent_class})
                     if not t.model:
+
+                        class OpenClassDef(object):
+                            def __init__(self):
+                                self.par_open = 0
+
+                            def __call__(self, ch):
+                                if ch == '{':
+                                    self.par_open += 1
+                                elif ch == '}':
+                                    self.par_open -= 1
+                                    if self.par_open == 0:
+                                        return False
+                                return True
+
+                        current_head = self.current_head()
+                        self.rewind_to(first_head)
+                        s = self.read(cond=OpenClassDef(), beyond=1)
+                        self.skip_spaces()
+                        if self.next_char() != ';' or not re.match(r'^.+\s*=\s*new\s+.+\(.*\)$', t.content, re.DOTALL):
+                            t.model = None
+                            self.rewind_to(current_head)
+                        else:
+                            t.model = ClassDefiningStatement('%s %s;' % (t.content, s))
+                            push = False
+
+                    if not t.model:
                         raise ParseError(u'Token can not be parsed: "{0}".'.format(t.content))
-                    else:
-                        push = True
 
                 if repush:
                     self._context.append(self._last_popped)
                 elif push:
+                    # print "pushing", t.model
                     if t.isinstance(CodeBlock):
                         t.model.starting_line = l1
                     self._context.append(t)
@@ -181,8 +214,16 @@ class JavaSourceFile(SourceFile):
                     self.package = pm.group(1).strip()  # TODO: check with file path
                     is_special_statement = True
 
-                # normal statement
-                t.model = JavaImport.try_parse(t.content)
+                # if without {
+                if t.content.startswith('if ') or t.content.startswith('if('):
+                    t.model = IfBlock(t.content[3:].strip()[:-1])
+                    t.model.starting_line = l1
+                    t.model.ending_line = l2
+                    t.type = 'control'
+                    self._last_popped = t
+                else:
+                    # normal statement
+                    t.model = JavaImport.try_parse(t.content)
                 if not t.model:
                     t.model = JavaStatement.try_parse(t.content)
                     if t.model:
@@ -366,6 +407,17 @@ class JavaImport(Import, LanguageSpecificParser):
 
 
 class JavaStatement(Statement, LanguageSpecificParser):
+    @classmethod
+    def try_parse(cls, string, opts=None):
+        """
+            :param str or unicode string: code to be parsed
+            :rtype: Statement
+        """
+        # TODO: any checks required?
+        return Statement(string)
+
+
+class ClassDefiningStatement(JavaStatement):
     @classmethod
     def try_parse(cls, string, opts=None):
         """

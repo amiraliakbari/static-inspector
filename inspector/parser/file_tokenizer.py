@@ -83,3 +83,9 @@ class FileTokenizer(object):
 
     def find_ahead(self, sub):
         return self.file_content.find(sub, self._parse_head)
+
+    def current_head(self):
+        return self._parse_head
+
+    def rewind_to(self, head_location):
+        self._parse_head = head_location

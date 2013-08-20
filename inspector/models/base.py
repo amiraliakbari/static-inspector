@@ -10,16 +10,15 @@ from inspector.utils.strings import summarize, has_word
 
 
 class LocatableInterface(object):
-    def get_abs_path(self):
+    @property
+    def abs_path(self):
         raise NotImplementedError
 
 
 class Project(LocatableInterface):
     def __init__(self, path, name=None):
-        if not path[-1] in ['/', '\\']:
-            path = os.path.join(path, '')  # append /
-        self.abs_path = path
-        self.name = name if name is not None else re.split(r'[/\\]', self.abs_path)[-2]
+        self._path = ''
+        self.name = ''
         self.source_roots = []
         self.ignored_dirs = []
 
@@ -28,24 +27,40 @@ class Project(LocatableInterface):
         self._file_groups = {}
 
         # initial configuration
+        self.abs_path = path
+        self.name = name if name is not None else re.split(r'[/\\]', self.abs_path)[-2]
         self.auto_detect_roots()
 
     #########################
     #  File System Related  #
     #########################
-    # TODO: make all paths use / in the model
-    def get_abs_path(self):
-        return self.abs_path
+    @property
+    def abs_path(self):
+        return self._path
+
+    @abs_path.setter
+    def abs_path(self, path):
+        if not path[-1] in ['/', '\\']:
+            path = os.path.join(path, '')  # append /
+        if not os.path.exists(path):
+            raise ValueError('Invalid directory: "{0}".'.format(path))
+        self._path = path
 
     def build_path(self, path):
         return os.path.join(self.abs_path, path)
 
     def build_relative_path(self, abs_path):
+        """ Return relative form of the path, returning path only contains / (and not \) on any platform
+
+            :rtype: str
+        """
         if not os.path.isabs(abs_path):
-            return abs_path
-        if not abs_path.startswith(self.abs_path):
+            path = abs_path
+        elif not abs_path.startswith(self.abs_path):
             raise ValueError('The path is not in project directory.')
-        return abs_path[len(self.abs_path):]
+        else:
+            path = abs_path[len(self.abs_path):]
+        return path.replace('\\', '/')
 
     ###################
     #  File Handling  #
@@ -78,7 +93,7 @@ class Project(LocatableInterface):
             handler.project = self
             handler.setup()
 
-        project_root = self.get_abs_path()
+        project_root = self.abs_path
         for r, d, files in os.walk(project_root):
             dir_path = self.build_relative_path(r)
             ignored = False
@@ -170,8 +185,9 @@ class Package(LocatableInterface):
         self.project = project
         self.name = None
 
-    def get_abs_path(self):
-        return self.project.get_abs_path() if self.project else None
+    @property
+    def abs_path(self):
+        return self.project.abs_path if self.project else None
 
 
 class File(LocatableInterface):
@@ -328,7 +344,7 @@ class SourceFile(File, FileTokenizer, Coverable):
         return self.package.project if self.package else None
 
     def get_abs_path(self):
-        pkg_abs = self.package.get_abs_path() if self.package else ''
+        pkg_abs = self.package.abs_path if self.package else ''
         return os.path.join(pkg_abs, self.filename)
 
     # noinspection PyShadowingBuiltins
@@ -379,8 +395,11 @@ class SourceFile(File, FileTokenizer, Coverable):
         """
             :rtype: inspector.parser.base.Token
         """
-        self._last_popped = self._context.pop()
-        return self._last_popped
+        p = self._context.pop()
+        # print "poped:", p.model
+        if p.isinstance(CodeBlock):
+            self._last_popped = p
+        return p
 
     def next_token(self):
         raise NotImplementedError()

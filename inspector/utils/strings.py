@@ -13,7 +13,7 @@ def summarize(string, max_len=10):
 
 def quoted(string):
     """
-        :param unicode string: string to be quoted
+        :param str or unicode string: string to be quoted
     """
     return u'"{0}"'.format(string)
 

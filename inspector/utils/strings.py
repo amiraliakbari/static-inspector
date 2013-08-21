@@ -22,3 +22,15 @@ def has_word(string, sub):
     """ Determine if the string has the given sub string as a whole word in it
     """
     return re.search(r"\b" + re.escape(sub) + r"\b", string) is not None
+
+
+def render_template(template_string, params):
+    """
+        :param str template_string: string to render
+        :param dict params: a dictionary containing template parameters
+        :rtype: str
+    """
+
+    for k, v in params.iteritems():
+        template_string = template_string.replace('{{ ' + k + ' }}', unicode(v))
+    return template_string

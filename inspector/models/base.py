@@ -447,6 +447,7 @@ class SourceFile(File, FileTokenizer, Coverable):
 class Import(object):
     def __init__(self, import_str, source_file=None):
         """
+            :param str or unicode import_str: the string used to import the identifier
             :param SourceFile source_file: the source file this import is located in
         """
         self.import_str = import_str
@@ -605,6 +606,13 @@ class Method(Function):
 
     def is_constructor(self):
         return self.return_type is None
+
+    @property
+    def qualified_name(self):
+        name = self.name
+        if self.parent_class:
+            name = self.parent_class.name + '.' + name  # TODO: this must be self.parent_class.qualified_name
+        return name
 
     @classmethod
     def parse_access(cls, access_str, default=None):

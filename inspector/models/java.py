@@ -324,7 +324,8 @@ class JavaInterface(JavaClass):
 class JavaMethod(Method, LanguageSpecificParser):
     # TODO: initial groups may come in other orders
     # TODO: better detection of templates
-    METHOD_RE = re.compile(r'^(@[a-zA-Z0-9_]+\s+)?([a-z]+\s+)?(static\s+)?(synchronized\s+)?([a-zA-Z0-9._<>]+\s+)?(\w+)\s*\((.*)\)(?:\s*throws ([a-zA-Z0-9<>_.,]+))?$')
+    METHOD_RE = re.compile(r'^(@[a-zA-Z0-9_]+\s+)?([a-z]+\s+)?(static\s+)?(synchronized\s+)?([a-zA-Z0-9._<>]+\s+)?(\w+)\s*\((.*?)\)(?:\s*throws ([a-zA-Z0-9<>_.,]+))?$',
+                           re.DOTALL)
 
     def __init__(self, *args, **kwargs):
         self.synchronized = kwargs.pop(u'synchronized', None) or False

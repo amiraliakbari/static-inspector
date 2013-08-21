@@ -15,7 +15,6 @@ if __name__ == '__main__':
         project_type = str(raw_input('What is the project type? [java/android/auto] '))
         analysis_type = str(raw_input('Select the analysis to perform on this project: [dynamic/framework-features] '))
     else:
-        print sys.argv
         project_dir = sys.argv[1]
         project_type = sys.argv[2]
         analysis_type = sys.argv[3]

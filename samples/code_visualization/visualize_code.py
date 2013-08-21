@@ -5,6 +5,7 @@ import sys
 
 from inspector.analyzer.project_analyzer import LocCounter, LocCounter2
 from inspector.models.base import Project
+from inspector.utils.strings import render_template
 
 
 if __name__ == '__main__':
@@ -53,7 +54,6 @@ if __name__ == '__main__':
 
     with open(os.path.join(current_dir, 'report_templates', html_template), 'r') as f:
         html = f.read()
-    for k, v in params.iteritems():
-        html = html.replace('{{ ' + k + ' }}', unicode(v))
+    html = render_template(html, params)
     with open(os.path.join(current_dir, 'reports', 'report.html'), 'w') as f:
         f.write(html)

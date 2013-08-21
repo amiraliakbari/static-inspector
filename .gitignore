@@ -37,6 +37,3 @@ nosetests.xml
 
 # IDEs
 /.idea/*
-
-# Project Specific
-/samples/code_visualization/reports/*

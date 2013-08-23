@@ -3,7 +3,7 @@ import re
 
 from inspector.parser.base import Token, LanguageSpecificParser
 from inspector.models.base import (Project, SourceFile, Class, Method, Import, Comment, Statement, ExceptionBlock,
-                                   CodeBlock, ForBlock, WhileBlock, IfBlock, Field)
+                                   CodeBlock, ForBlock, WhileBlock, IfBlock, Field, SwitchBlock)
 from inspector.models.consts import Language
 from inspector.models.exceptions import ParseError
 from inspector.utils.arrays import find
@@ -113,6 +113,16 @@ class JavaSourceFile(SourceFile):
                 # context
                 try:
                     tmp = self.context_pop()
+
+                    if tmp.isinstance(SwitchBlock):
+                        sw = tmp.model
+                        # print '(((((((((((((((('
+                        # print sw.condition
+                        # for k in sw.case_orders:
+                        #     print 'CASE', k, ':', sw.cases[k]
+                        # print 'DEFAULT:', sw.default
+                        # print ')))))))))))))))))'
+
                     if tmp.isinstance(CodeBlock):
                         tmp.model.ending_line = l2
                 except IndexError:
@@ -144,8 +154,9 @@ class JavaSourceFile(SourceFile):
                     top_if = self._last_popped
                     # for x in self._context:
                     #     print type(x.model).__name__, x.model
-                    # print ">>>", top_if.model, type(top_if.model)
+                    # print "---", top_if.model, type(top_if.model)
                     if top_if.isinstance(IfBlock):
+                        t.model = top_if.model
                         if t.content.startswith('else if'):  # TODO: is this ok for java?
                             top_if.model.add_elif(t.content[7:].strip())  # TODO: remove (), etc.
                             repush = True
@@ -155,6 +166,11 @@ class JavaSourceFile(SourceFile):
                     else:
                         else_code = t.content + self.read_ahead(30).replace('\n', '\\n')
                         raise ParseError('else not in a if block: {0}...'.format(else_code))
+
+                # SwitchBlock
+                elif t.content.startswith('switch(') or t.content.startswith('switch '):
+                    t.model = SwitchBlock(t.content[7:].strip()[:-1])
+                    push = True
 
                 # ForBlock
                 elif t.content.startswith('for'):
@@ -230,6 +246,29 @@ class JavaSourceFile(SourceFile):
                 if pm:
                     self.package = pm.group(1).strip()  # TODO: check with file path
                     is_special_statement = True
+
+                # TODO: code blocks (like if/...) are not added to cases in switch (and maybe neither to If/...)
+                # case
+                sw = self.find_context_top(lambda x: x.isinstance(SwitchBlock))
+                if sw:
+                    case_pattern = r'case\s+(.+?)\s*:'
+                    fa = re.findall(case_pattern, t.content)
+                    if fa:
+                        for case_cond in fa:
+                            sw.model.add_case(case_cond)
+                    t.content = re.sub(case_pattern, '', t.content).strip()
+
+                    if re.match(r'^default\s*:', t.content):
+                        sw.model.add_default()
+                        t.content = t.content[t.content.find(':') + 1:].strip()
+
+                    if re.match(r'^break\s*;$', t.content):
+                        sw.model.add_break()
+                        t.model = sw.model
+                    elif re.match(r'\breturn\b.*;', t.content, re.DOTALL):
+                        sw.model.add_return()
+                    elif not t.content.strip():
+                        t.model = sw.model
 
                 # if without {
                 if t.content.startswith('if ') or t.content.startswith('if('):
@@ -458,7 +497,7 @@ class JavaMethod(Method, LanguageSpecificParser):
         args_str = fm.group(7)
 
         # method name can not be a reserved word
-        if method_name in ['synchronized']:
+        if method_name in ['synchronized', 'switch']:
             return None
 
         m = JavaMethod(parent_class,

@@ -491,6 +491,12 @@ class CodeBlock(Coverable):
         """
         self.statements.append(statement)
 
+    def __unicode__(self):
+        return u'CodeBlock:\n\t' + u'\n\t'.join([unicode(s) for s in self.statements])
+
+    def __str__(self):
+        return str(unicode(self))
+
     @property
     def lines_count(self):
         if self.ending_line is None or self.starting_line is None:
@@ -721,6 +727,45 @@ class IfBlock(CodeBlock):
             self.else_block.add_statement(statement)
         else:
             super(IfBlock, self).add_statement(statement)
+
+
+class SwitchBlock(CodeBlock):
+    def __init__(self, condition):
+        super(SwitchBlock, self).__init__()
+        self.condition = condition
+        self.cases = {}
+        self.case_orders = []
+        self.mode = ''
+        self.default = CodeBlock()
+        self.active_cases = []
+
+    def add_case(self, case_expr):
+        # noinspection PyUnresolvedReferences
+        self.active_cases.append(case_expr)
+        self.case_orders.append(case_expr)
+
+    def add_break(self):
+        self.active_cases = []
+
+    def add_return(self):
+        self.mode = 'return'
+
+    def add_default(self):
+        self.active_cases = 'default'
+
+    def add_statement(self, statement):
+        if not self.active_cases and not self.mode:
+            raise ValueError('Statement not in a case: {0}.'.format(unicode(statement)))
+        if self.active_cases == 'default':
+            self.default.add_statement(statement)
+        else:
+            for case in self.active_cases:
+                if not self.cases.get(case):
+                    self.cases[case] = CodeBlock()
+                self.cases[case].add_statement(statement)
+            if self.mode == 'return':
+                self.mode = ''
+                self.active_cases = []
 
 
 class ExceptionBlock(CodeBlock):

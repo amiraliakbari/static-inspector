@@ -16,8 +16,9 @@ def framework_features_analyze(project):
     fa = FrameworkFeatureAnalyzer('android', project=project)
     # TODO: use package format:
     source_file = project.get_file('app/src/main/java/com/github/mobile/ui/issue/IssueFragment.java')
-    fa.analyze_framework_imports(source_file)
-    fa.analyze_source(source_file)
+    fa.add_source_file(source_file)
+    source_file = project.get_file('app/src/main/java/com/github/mobile/ui/issue/IssuesFragment.java')
+    fa.add_source_file(source_file)
 
     current_dir = os.path.abspath(os.path.dirname(__file__))
     generate_graph_html(fa.framework_tree, os.path.join(current_dir, 'reports', 'report.html'))

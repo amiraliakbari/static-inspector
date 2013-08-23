@@ -15,6 +15,13 @@ class FrameworkFeatureAnalyzer(object):
         self.framework_tree.add_node(self.framework_namespace)
         self.import_usages = []
 
+    def add_source_file(self, source_file):
+        """
+            :param inspector.models.base.SourceFile source_file: the file
+        """
+        self.analyze_framework_imports(source_file)
+        self.analyze_source(source_file)
+
     def analyze_framework_imports(self, source_file):
         """
             :param inspector.models.base.SourceFile source_file: the file

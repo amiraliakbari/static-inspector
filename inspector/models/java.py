@@ -3,9 +3,10 @@ import re
 
 from inspector.parser.base import Token, LanguageSpecificParser
 from inspector.models.base import (Project, SourceFile, Class, Method, Import, Comment, Statement, ExceptionBlock,
-                                   CodeBlock, ForBlock, WhileBlock, IfBlock)
+                                   CodeBlock, ForBlock, WhileBlock, IfBlock, Field)
 from inspector.models.consts import Language
 from inspector.models.exceptions import ParseError
+from inspector.utils.arrays import find
 from inspector.utils.lang import enum
 
 
@@ -36,6 +37,18 @@ class JavaSourceFile(SourceFile):
     def language(self):
         return Language.JAVA
 
+    ##########################
+    #  Model Access Helpers  #
+    ##########################
+    def get_interface(self, name):
+        """
+            :rtype: JavaInterface
+        """
+        return find(self.interfaces, lambda m: m.name == name)
+
+    #############
+    #  Parsing  #
+    #############
     def next_token(self):
         """
             :return: next token, parsed
@@ -81,6 +94,15 @@ class JavaSourceFile(SourceFile):
             t.content = self.read(cond=IsNotBreaking())
             l2 = self._cur_line
             first_head = self.current_head()
+
+            # TODO: is it necessary to use parent_*block* here?
+            parent_class = self.find_context_top(lambda x: x.isinstance(Class))
+            if parent_class:
+                parent_class = parent_class.model
+            parent_block = self.find_context_top(lambda x: x.isinstance(CodeBlock))
+            if parent_block:
+                parent_block = parent_block.model
+
             ch = self.next_char()
             if ch == '}':
                 if t.content.strip():
@@ -147,11 +169,6 @@ class JavaSourceFile(SourceFile):
                 # More complex parts (class, method)
                 else:
                     push = True
-
-                    # TODO: is it necessary to use parent_block here?
-                    parent_class = self.find_context_top(lambda x: x.isinstance(Class))
-                    if parent_class:
-                        parent_class = parent_class.model
 
                     if not t.model:
                         t.model = JavaClass.try_parse(t.content, {u'parent_class': parent_class})
@@ -221,9 +238,25 @@ class JavaSourceFile(SourceFile):
                     t.model.ending_line = l2
                     t.type = 'control'
                     self._last_popped = t
-                else:
-                    # normal statement
+
+                # class field
+                if not t.model and parent_class:
+                    if parent_block == parent_class:
+                        # fields must be defined directly in classes
+                        t.model = JavaField.try_parse(t.content, {u'parent_class': parent_class})
+                        if t.model:
+                            if isinstance(t.model, list):
+                                for f in t.model:
+                                    parent_class.add_statement(f)
+                                t.model = t.model[0]
+                            else:
+                                parent_class.add_statement(t.model)
+
+                # import
+                if not t.model:
                     t.model = JavaImport.try_parse(t.content)
+
+                # normal statement
                 if not t.model:
                     t.model = JavaStatement.try_parse(t.content)
                     if t.model:
@@ -246,6 +279,7 @@ class JavaSourceFile(SourceFile):
         self.skip_spaces()
         if t:
             t.normalize_content()
+            # print ">>>", t.model, '\t', t.content
             if hasattr(t.model, 'source_file'):
                 t.model.source_file = self
         return t
@@ -274,13 +308,18 @@ class JavaClass(Class, LanguageSpecificParser):
 
     @classmethod
     def parse_access(cls, access_str):
+        """
+            :type access_str: str or unicode or None
+        """
+        if access_str:
+            access_str = access_str.strip()
         if not access_str:
             return cls.ACCESS.PACKAGE
 
         for k, v in cls.ACCESS.display_name.items():
             if v == access_str:
                 return k
-        return None
+        return cls.ACCESS.UNKNOWN
 
     @classmethod
     def try_parse(cls, string, opts=None):
@@ -296,7 +335,7 @@ class JavaClass(Class, LanguageSpecificParser):
                          parent_class=opts.get(u'parent_class'),
                          extends=ext_str,
                          implements=[s.strip() for s in imp_str.split(',')] if imp_str else [],
-                         access=JavaClass.parse_access(acc_str.strip() if acc_str else None))
+                         access=JavaClass.parse_access(acc_str))
 
 
 class JavaInterface(JavaClass):
@@ -305,6 +344,20 @@ class JavaInterface(JavaClass):
     def __init__(self, name, source_file=None, package=None, parent_class=None, access=None, implements=None):
         super(JavaInterface, self).__init__(name, source_file=source_file, package=package, parent_class=parent_class,
                                             access=access, implements=implements)
+        self.abstract_methods = []
+
+    #############
+    #  Parsing  #
+    #############
+    def add_statement(self, statement):
+        if isinstance(statement, Statement):
+            code = statement.code.strip()
+            if code.endswith(';'):
+                m = JavaMethod.try_parse(code[:-1], {'parent_class': self})
+                if m:
+                    self.abstract_methods.append(m)
+                    return
+        return super(JavaInterface, self).add_statement(statement)
 
     @classmethod
     def try_parse(cls, string, opts=None):
@@ -318,7 +371,58 @@ class JavaInterface(JavaClass):
         return JavaInterface(name=cm.group(2),
                              parent_class=opts.get(u'parent_class'),
                              implements=[s.strip() for s in imp_str.split(',')] if imp_str else [],
-                             access=JavaClass.parse_access(acc_str.strip() if acc_str else None))
+                             access=JavaClass.parse_access(acc_str))
+
+
+class JavaField(Field, LanguageSpecificParser):
+    MATCH_RE = re.compile(r'^(@\w+\s+)?(\w+\s+)?(static\s+)?([a-zA-Z0-9<>\[\].j_]+)\s+(.*?)\s*;$', re.DOTALL)
+
+    @classmethod
+    def try_parse(cls, string, opts=None):
+        opts = opts or {}
+        cm = cls.MATCH_RE.match(string)
+        # print "+", cm.groups() if cm else ""
+        if not cm:
+            return None
+
+        an = cm.group(1)
+        vs = JavaClass.parse_access(cm.group(2))
+        tp = cm.group(4)
+        name = cm.group(5)
+
+        results = []
+
+        names = []
+        last_i = 0
+        open_chs = ['()', '[]', '{}']
+        open_cnt = [0] * len(open_chs)
+        for i, c in enumerate(name):
+            for j, op in enumerate(open_chs):
+                if c == op[0]:
+                    open_cnt[j] += 1
+                elif c == op[1]:
+                    open_cnt[j] -= 1
+            if c == ',':
+                if open_cnt == [0] * len(open_cnt):
+                    names.append(name[last_i:i].strip())
+                    last_i = i + 1
+        if last_i < len(name):
+            names.append(name[last_i:].strip())
+
+        for n in names:
+            # print "++", n
+            m = re.match(r'^(\w+)(\s*=.+)?$', n.strip(), re.DOTALL)
+            # print "+++", m
+            if m:
+                results.append(Field(m.group(1), tp, initializer=m.group(2), is_static=cm.group(3) is not None,
+                                     parent_class=opts.get(u'parent_class'), visibility=vs, annotations=an))
+            else:
+                return None
+        if not results:
+            return None
+        if len(results) == 1:
+            results = results[0]
+        return results
 
 
 class JavaMethod(Method, LanguageSpecificParser):

@@ -538,14 +538,35 @@ class Class(CodeBlock):
         return unicode(self)
 
     def add_statement(self, statement):
-        # TODO: model and check fields
-        self.fields.append(statement)
+        if isinstance(statement, Field):
+            self.fields.append(statement)
+        else:
+            # TODO: support statics/etc.
+            raise ValueError('Invalid statement inside a class: "{0}".'.format(unicode(statement)))
 
     def get_method(self, name):
         """
             :rtype: Method
         """
         return find(self.methods, lambda m: m.name == name)
+
+
+class Field(object):
+    def __init__(self, name, field_type, parent_class, visibility=None, annotations=None, initializer=None,
+                 is_static=False):
+        self.name = name
+        self.type = field_type
+        self.parent_class = parent_class
+        self.visibility = visibility
+        self.is_static = is_static
+        self.annotations = annotations
+        self.initializer = initializer
+
+    def __unicode__(self):
+        return u'Field: {1} {0}'.format(self.name, self.type)
+
+    def __str__(self):
+        return str(unicode(self))
 
 
 class Function(CodeBlock):

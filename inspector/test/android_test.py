@@ -37,6 +37,11 @@ class TestAndroid(unittest.TestCase):
             for l in usages:
                 self.assertTrue(sf.get_line(l).find(identifier) > -1)
 
+    def test_java_parse_1(self):
+        sf = self.project.get_file('sample_files/IssueFragment.java')
+        cls = sf.get_class('IssueFragment')
+        self.assertEqual(len(cls.fields), 34)
+
 
 if __name__ == '__main__':
     unittest.main()

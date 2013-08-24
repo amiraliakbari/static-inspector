@@ -5,6 +5,7 @@ import re
 from inspector.models.consts import Language
 from inspector.parser.file_tokenizer import FileTokenizer
 from inspector.utils.arrays import find
+from inspector.utils.files import get_extension
 from inspector.utils.lang import enum
 from inspector.utils.strings import summarize, has_word
 
@@ -20,11 +21,11 @@ class Project(LocatableInterface):
         self._path = ''
         self.name = ''
         self.source_roots = []
-        self.ignored_dirs = []
+        self.ignored_dirs = []  # TODO: load this from .gitignore file
 
         # files
         self._files = {}  # loaded files cache
-        self._file_groups = {}
+        self.file_extensions = set()
 
         # initial configuration
         self.abs_path = path
@@ -110,11 +111,8 @@ class Project(LocatableInterface):
                 handler.enter_dir(dir_path)
             for f in files:
                 path = self.build_relative_path(os.path.join(r, f))
-                ext = os.path.splitext(path)[1][1:]
+                self.file_extensions.add(get_extension(path))
                 self._files[path] = None
-                if not ext in self._file_groups:
-                    self._file_groups[ext] = []
-                self._file_groups[ext].append(path)
                 if handler:
                     handler.handle_file(path)
 
@@ -123,10 +121,16 @@ class Project(LocatableInterface):
                 handler.exit_dir(dir_stack.pop())
             handler.tear_down()
 
-    def filter_files(self, cond):
+    def filter_files(self, cond=None, extension=None):
         """ Return filenames of files in this project that satisfy the condition function
+
+            :param str or None extension: the file extensions to filter, e.g. 'java' or 'java,xml'
         """
-        return (f for f in self._files.iterkeys() if cond(f))
+        if cond is not None:
+            return (f for f in self._files.iterkeys() if cond(f))
+
+        if extension is not None:
+            return self.filter_files(cond=lambda f: get_extension(f) in [e.strip() for e in extension.split(',')])
 
     def get_file(self, path, is_qualified=False):
         """

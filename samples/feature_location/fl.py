@@ -35,6 +35,7 @@ if __name__ == '__main__':
     except ValueError:
         print '[ERROR] Invalid directory: "{0}"'.format(project_dir)
         sys.exit(1)
+    p.ignored_dirs = ['.idea']
     p.rescan_files()
 
     if analysis_type == 'dynamic':

@@ -1,9 +1,29 @@
 # -*- coding: utf-8 -*-
 import re
+
 from networkx import Graph
 
 
 class FrameworkFeatureAnalyzer(object):
+    """ A class to do feature location analyses on a project written in a specific framework
+
+        Project Graph Details:
+        -----------------------
+        Node Groups:
+            1: Android package
+            2: -
+            3: Android imported indentifier
+            4: Java class
+            5: Java method
+            6: XML file Category
+            7: XML file
+
+        Edge Groups:
+            1: internal/hierarchical links
+            2: Java---Android mappings
+            3: Java---XML mappings
+    """
+
     def __init__(self, framework, project):
         """
             :param inspector.models.base.Project project: the project to be analyzed
@@ -11,8 +31,8 @@ class FrameworkFeatureAnalyzer(object):
         self.project = project
 
         self.framework_namespace = str(framework)
-        self.framework_tree = Graph()
-        self.framework_tree.add_node(self.framework_namespace)
+        self.graph = Graph()
+        self.graph.add_node(self.framework_namespace)
         self.import_usages = []
 
     def add_source_file(self, source_file):
@@ -39,29 +59,58 @@ class FrameworkFeatureAnalyzer(object):
                 last = None
                 for i in range(len(components)):
                     cn = '.'.join(components[:i + 1])
-                    self.framework_tree.add_node(cn, **data)
+                    self.graph.add_node(cn, **data)
                     if last:
-                        self.framework_tree.add_edge(last, cn, weight=1, group=1)
+                        self.graph.add_edge(last, cn, weight=1, group=1)
                     last = cn
                 if last:
                     data['group'] = 3
-                    self.framework_tree.add_node(last, **data)
+                    self.graph.add_node(last, **data)
 
     def analyze_source(self, source_file):
         """
             :param inspector.models.base.SourceFile source_file: the file
         """
         for cl in source_file.classes:
-            self.framework_tree.add_node(cl.name, group=4)
+            self.graph.add_node(cl.name, group=4)
             for fu in cl.methods:
                 # print '[{0}-{1}]'.format(fu.starting_line, fu.ending_line), re.sub('\s*\n\s*', ' ', unicode(fu))
                 fn = fu.qualified_name
-                self.framework_tree.add_node(fn, group=5)
-                self.framework_tree.add_edge(cl.name, fn, weight=1, group=2)
+                self.graph.add_node(fn, group=5)
+                self.graph.add_edge(cl.name, fn, weight=1, group=1)
                 for im, usages in self.import_usages:
                     w = 0
                     for ln in usages:
                         if fu.starting_line <= ln <= fu.ending_line:
                             w += 1
                     if w:
-                        self.framework_tree.add_edge(im.import_str, fn, weight=w, group=3)
+                        self.graph.add_edge(im.import_str, fn, weight=w, group=2)
+
+    def add_xml_files(self):
+        xml_sub_groups = {':layout', ':values', ':drawable', ':menu', ':xml', ':color'}
+        self.graph.add_nodes_from([':XML'] + list(xml_sub_groups), group=6)
+        self.graph.add_edges_from([(':XML', g) for g in xml_sub_groups], weight=1, group=1)
+        for path in self.project.filter_files(extension='xml'):
+            xml_file = self.project.get_file(path)
+
+            if path.startswith('app/res/'):
+                g = path.split('/')[2]
+                name = '/'.join(path.split('/')[2:])
+                self.graph.add_node(name, group=7)
+            else:
+                if not path.split('/')[-1] in ['pom.xml', 'AndroidManifest.xml']:  # is ignored?
+                    print 'invalid path:', path
+                continue
+
+            valid_group = False
+            if g == 'values':
+                g = 'values-default'
+            if g.startswith('values-'):
+                g = g[7:]
+                self.graph.add_edge(':values', ':' + g, weight=1, group=1)
+                valid_group = True
+            g = ':' + g
+            if valid_group or g in xml_sub_groups:
+                self.graph.add_edge(g, name, weight=1, group=1)
+            else:
+                print 'invalid subgroup:', g

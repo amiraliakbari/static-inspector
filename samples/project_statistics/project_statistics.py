@@ -20,14 +20,13 @@ if __name__ == '__main__':
         print '  Total number of files:', len(p._files)
         print '  File type breakdown:'
         TR = len(p._files) / 10
-        for k, v in p._file_groups.iteritems():
-            if not k:
-                k = '""'
-            loc = None
-            if k in exts:
-                loc = 0
-                for f in v:
+        for ext in p.file_extensions:
+            files = p.filter_files(extension=ext)
+            ext_name = ext if ext else '""'
+            loc = 0
+            if ext in exts:
+                for f in files:
                     loc += p.get_file(f).lines_count
-            if loc or len(v) >= TR:
-                print '   ', k, '  \t', len(v), ' \t', loc if loc else 'N/A'
+            if loc or len(files) >= TR:
+                print '   ', ext_name, '  \t', len(files), ' \t', loc if loc else 'N/A'
         print ""

@@ -18,6 +18,10 @@ class LocatableInterface(object):
 
 class Project(LocatableInterface):
     def __init__(self, path, name=None):
+        """ Create a project from a filesystem's path
+            loading of files is done later, on demand (by calling methods)
+
+        """
         self._path = ''
         self.name = ''
         self.source_roots = []
@@ -66,6 +70,14 @@ class Project(LocatableInterface):
     ###################
     #  File Handling  #
     ###################
+    @property
+    def files(self):
+        """ Cache layer over self._files, returning all filenames in the project
+        """
+        if not self._files:
+            self.rescan_files()
+        return self._files
+
     class FileDfsHandler(object):
         def __init__(self):
             self.project = None
@@ -127,18 +139,18 @@ class Project(LocatableInterface):
             :param str or None extension: the file extensions to filter, e.g. 'java' or 'java,xml'
         """
         if cond is not None:
-            return (f for f in self._files.iterkeys() if cond(f))
+            return (f for f in self.files.iterkeys() if cond(f))
 
         if extension is not None:
             return self.filter_files(cond=lambda f: get_extension(f) in [e.strip() for e in extension.split(',')])
 
+        #TODO: other cases?
+
     def get_file(self, path, is_qualified=None):
         """
             :param str path: source file path, can be relative, abstract, or in java dotted format
+            :rtype: File or SourceFile or JavaSourceFile
         """
-        if not self._files:
-            self.rescan_files()
-
         if is_qualified is None:
             is_qualified = not ('/' in path or '\\' in path)
 
@@ -147,7 +159,7 @@ class Project(LocatableInterface):
             found = False
             rel_path = os.path.join(*path.split('.'))
             for sr in self.source_roots:
-                if os.path.join(sr, rel_path) + '.java' in self._files:
+                if os.path.join(sr, rel_path) + '.java' in self.files:
                     rel_path = os.path.join(sr, rel_path) + '.java'
                     found = True
                     break
@@ -157,14 +169,21 @@ class Project(LocatableInterface):
             rel_path = self.build_relative_path(path)
 
         # file cache
-        f = self._files[rel_path]
+        f = self.files[rel_path]
         if f is None:
-            f = self._files[rel_path] = self.load_file(rel_path)
+            f = self.files[rel_path] = self.load_file(rel_path)
             f.project_path = rel_path
         return f
 
     def get_files(self, filenames):
         return (self.get_file(filename) for filename in filenames)
+
+    def all_files(self):
+        """ Return an iterator of all files in the project
+            note: returned files are parsed, so this may take a while for large projects
+            note: use filter_files or get_files for returning a subset of all project files
+        """
+        return self.get_files(self.files)
 
     def dfs_files(self, handler):
         """
@@ -237,7 +256,7 @@ class File(LocatableInterface):
         self._file_size = None
         self._lines = None
         self.filename = filename
-        self.project_path = None
+        self.project_path = None  # project relative path
 
         # setup
         if preload:
@@ -567,7 +586,7 @@ class Class(CodeBlock):
         self.name = name
         self.parent_block = self.parent_class = parent_class
         self.source_file = source_file
-        self.package = package
+        self._package = package
         self.methods = []
         self.fields = []
         if not extends:
@@ -583,6 +602,31 @@ class Class(CodeBlock):
 
     def __str__(self):
         return unicode(self)
+
+    def __repr__(self):
+        return 'class:{0}'.format(self.qualified_name)
+
+    @property
+    def qualified_name(self):
+        # TODO: use self.package instead of self.source_file
+        p = os.path.splitext(self.source_file.project_path)[0].split('/')
+        # TODO: check project better!
+        # project = self.source_file.project
+        # if project and p[0] in project.source_roots:
+        #     p = p[1:]
+        if p[0] == 'src':
+            # TODO: fix this hardcode!
+            p = p[1:]
+        p.append(self.name)
+        return '.'.join(p)
+
+    @property
+    def package(self):
+        if self._package:
+            return self._package
+        if self.source_file:
+            return self.source_file.package
+        return None
 
     def add_statement(self, statement):
         if isinstance(statement, Field):
@@ -679,7 +723,7 @@ class Method(Function):
     def qualified_name(self):
         name = self.name
         if self.parent_class:
-            name = self.parent_class.name + '.' + name  # TODO: this must be self.parent_class.qualified_name
+            name = self.parent_class.qualified_name + '.' + name
         return name
 
     @classmethod

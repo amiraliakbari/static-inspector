@@ -3,6 +3,7 @@ import os
 import unittest
 
 from inspector.models.base import Comment, Project
+from inspector.models.java import JavaProject
 
 
 class BaseModelTest(unittest.TestCase):
@@ -45,6 +46,7 @@ class BaseModelTest(unittest.TestCase):
         p = Project(tests_path)
         p.ignored_dirs.append('__pycache__')
         p.ignored_dirs.append('data/android')
+        p.ignored_dirs.append('data/projects')
         hnd = TestFileDfsHandler()
         p.dfs_files(hnd)
         self.assertGreaterEqual(len(hnd.files), 11)  # counting possible pyc/... files
@@ -53,6 +55,24 @@ class BaseModelTest(unittest.TestCase):
             self.assertIn('data/java/sample_sources/{0}.java'.format(i), hnd.files)
         DIRS = u'<><data><data.java><data.java.sample_sources></data.java.sample_sources></data.java></data></>'
         self.assertEqual(hnd.dir_xml, DIRS)
+
+
+class LargeModelTest(unittest.TestCase):
+    def setUp(self):
+        path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data', 'projects', 'gissue')
+        self.project = JavaProject(path)
+
+    def test_project_model(self):
+        self.assertEqual(self.project.name, 'gissue')
+        self.assertListEqual(self.project.source_roots, ['src'])
+
+    def test_class_model(self):
+        cls = self.project.find('class:com.g.issue.IssueFragment')
+        self.assertEqual(cls.name, 'IssueFragment')
+        self.assertIsNone(cls.parent_block)
+        self.assertEqual(cls.package, 'com.g.issue')  # TODO: this must be a package
+        self.assertTrue(cls.source_file.filename.endswith('gissue/src/com/g/issue/IssueFragment.java'))
+        self.assertEqual(cls.qualified_name, 'com.g.issue.IssueFragment')
 
 
 if __name__ == '__main__':

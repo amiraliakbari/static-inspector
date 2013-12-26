@@ -14,6 +14,16 @@ class SaqlQuery(object):
             qs += u' WHERE ' + u' AND '.join(self.where_conditions)
         return qs
 
+    @property
+    def select_from_type(self):
+        tp = None
+        for sf in self.select_from:
+            t = sf.split(':', 1)[0]
+            if tp and t != tp:
+                raise ValueError('Mixed FROM types is not supported ({0} and {1}).'.format(tp, t))
+            tp = t
+        return tp
+
     def is_select_classes(self):
         return self.select_type == 'classes'
 
@@ -25,6 +35,9 @@ class SaqlQuery(object):
 
     def is_select_lines(self):
         return self.select_type == 'lines'
+
+    def is_project_level(self):
+        return self.select_from_type == 'project'
 
 
 class SaqlParser(object):
@@ -40,5 +53,6 @@ class SaqlParser(object):
         q = SaqlQuery()
         q.select_type = m.group(1).strip()
         q.select_from = [s.strip() for s in m.group(2).split(',')]
-        q.where_conditions = [s.strip() for s in m.group(3).split(' AND ')]
+        wcl = m.group(3)
+        q.where_conditions = [s.strip() for s in wcl.split(' AND ')] if wcl else []
         return q

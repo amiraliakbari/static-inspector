@@ -340,10 +340,19 @@ class JavaClass(Class, LanguageSpecificParser):
                  implements=None):
         super(JavaClass, self).__init__(name, source_file=source_file, package=package, parent_class=parent_class,
                                         extends=extends)
+        # TODO: should we set package from "package ...;" line or from source file?
         if len(self.extends) > 1:
             raise ParseError(u'Multiple inheritance is not supported in Java.')
         self.access = access or self.ACCESS.PACKAGE
         self.implements = implements or []  # TODO: set real Interface reference
+
+    @property
+    def qualified_name(self):
+        qn = super(JavaClass, self).qualified_name
+        p = qn.split('.')
+        if len(p) > 1 and p[-1] == p[-2]:
+            p = p[:-1]
+        return '.'.join(p)
 
     @classmethod
     def parse_access(cls, access_str):

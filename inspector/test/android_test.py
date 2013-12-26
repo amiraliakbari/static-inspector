@@ -13,6 +13,7 @@ class TestAndroid(unittest.TestCase):
         path = os.path.join(os.path.abspath(os.path.dirname(__file__)), 'data', 'android', 'github-android')
         self.project = AndroidProject(path)
 
+    # noinspection PyPep8Naming
     def assertFilenameEqual(self, filename1, filename2):
         return filename1.replace('\\', '/').endswith('/github-android/' + filename2)
 

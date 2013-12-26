@@ -34,7 +34,3 @@ class TestJavaCoverage(unittest.TestCase):
         self.assertEqual(sf.coverage.covered_lines_count, 11)
         self.assertAlmostEqual(sf.covered_ratio(), .478, places=3)
         self.assertAlmostEqual(sf.get_class('MyFirstProgram').get_method('main').covered_ratio(), .579, places=3)
-
-
-if __name__ == '__main__':
-    unittest.main()

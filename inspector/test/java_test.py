@@ -83,7 +83,3 @@ class TestParseInternals(unittest.TestCase):
         self.assertEqual(JavaClass.parse_access('public'), JavaClass.ACCESS.PUBLIC)
         self.assertEqual(JavaClass.parse_access('public '), JavaClass.ACCESS.PUBLIC)
         self.assertEqual(JavaClass.parse_access('published'), JavaClass.ACCESS.UNKNOWN)
-
-
-if __name__ == '__main__':
-    unittest.main()

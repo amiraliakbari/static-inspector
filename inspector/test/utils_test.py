@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import unittest
-from inspector.utils.strings import has_word, quoted, summarize
+from inspector.utils.strings import has_word, quoted, summarize, render_template
 
 
 class StringsTest(unittest.TestCase):
@@ -35,5 +35,8 @@ class StringsTest(unittest.TestCase):
         self.assertFalse(has_word(string, 'fun'))
         self.assertTrue(has_word(string, 'analyzer.func'))
 
-if __name__ == '__main__':
-    unittest.main()
+    def test_render_template(self):
+        template = 'Hi {{ name }},\nI like to say hello to you ({{ name }}), that\'s it.\nBests,\n{{ sender }}'
+        params = {'name': 'Bob', 'sender': 'John Smith'}
+        rendered = 'Hi Bob,\nI like to say hello to you (Bob), that\'s it.\nBests,\nJohn Smith'
+        self.assertEqual(render_template(template, params), rendered)

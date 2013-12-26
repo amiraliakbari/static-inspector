@@ -17,7 +17,10 @@ class FileAnalyzer(object):
 
     @classmethod
     def estimate_file_size(cls, file_obj):
-        """
+        """ Return character count and line count of the file
+             note: for binary files, the int(size) in KiB is returned for both values
+             note: the last blank line is ignored (if any), but the \n's are counted
+
             :type file_obj: inspector.models.base.File
         """
         binary = cls.is_binary(file_obj)

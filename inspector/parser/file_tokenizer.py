@@ -18,9 +18,10 @@ class FileTokenizer(object):
         if content_file is not None:
             if isinstance(content_file, basestring):
                 self.file_content = content_file
+            elif isinstance(content_file, file):
+                self.file_content = content_file.read()
             else:
-                with open(content_file, 'r') as f:
-                    self.file_content = f.read()
+                raise ValueError('Invalid content')
             self.L = len(self.file_content)
         else:
             self.file_content = None

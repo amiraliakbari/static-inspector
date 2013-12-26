@@ -25,7 +25,8 @@ def has_word(string, sub):
 
 
 def render_template(template_string, params):
-    """
+    """ Replace all {{ vars }} with their values given in a dictionary
+
         :param str template_string: string to render
         :param dict params: a dictionary containing template parameters
         :rtype: str

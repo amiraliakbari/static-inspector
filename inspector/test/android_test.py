@@ -63,7 +63,3 @@ class TestAndroid(unittest.TestCase):
         sf = self.project.get_file('sample_files/IssueFragment.java')
         cls = sf.get_class('IssueFragment')
         self.assertEqual(len(cls.fields), 34)
-
-
-if __name__ == '__main__':
-    unittest.main()

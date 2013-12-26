@@ -44,9 +44,8 @@ class BaseModelTest(unittest.TestCase):
 
         tests_path = os.path.abspath(os.path.dirname(__file__))
         p = Project(tests_path)
-        p.ignored_dirs.append('__pycache__')
-        p.ignored_dirs.append('data/android')
-        p.ignored_dirs.append('data/projects')
+        for d in ['__pycache__', 'data/android', 'data/projects', 'data/files', 'data/python', 'data/django']:
+            p.ignored_dirs.append(d)
         hnd = TestFileDfsHandler()
         p.dfs_files(hnd)
         self.assertGreaterEqual(len(hnd.files), 11)  # counting possible pyc/... files
@@ -77,7 +76,3 @@ class LargeModelTest(unittest.TestCase):
         # inheritance
         self.assertEqual(cls.extends, ['DialogFragment'])
         self.assertTrue(cls.is_subclass_of('DialogFragment'))
-
-
-if __name__ == '__main__':
-    unittest.main()

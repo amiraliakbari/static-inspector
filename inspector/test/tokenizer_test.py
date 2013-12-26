@@ -1,11 +1,27 @@
 # -*- coding: utf-8 -*-
+from tempfile import TemporaryFile
 import unittest
 
 from inspector.parser.file_tokenizer import FileTokenizer
 
 
-class TestJavaParse(unittest.TestCase):
+class TestFileTokenizer(unittest.TestCase):
     SAMPLE_STRING_1 = 'abc\nabc1\n\n2\ng-h-i-j-k-lm.'
+
+    def test_opening(self):
+        # string
+        tz = FileTokenizer(content_file=self.SAMPLE_STRING_1)
+        self.assertEqual(tz.L, 25)
+
+        # file
+        f = TemporaryFile()
+        f.write(self.SAMPLE_STRING_1)
+        f.seek(0)
+        tz = FileTokenizer(content_file=f)
+        self.assertEqual(tz.L, 25)
+
+        # other (invalid)
+        self.assertRaises(ValueError, FileTokenizer, content_file=())
 
     def test_parse(self):
         tz = FileTokenizer(content_file=self.SAMPLE_STRING_1)
@@ -39,7 +55,3 @@ class TestJavaParse(unittest.TestCase):
     def test_argument_checking(self):
         tz = FileTokenizer(content_file=self.SAMPLE_STRING_1)
         self.assertRaises(ValueError, tz.next_char, skip=-2)
-
-
-if __name__ == '__main__':
-    unittest.main()

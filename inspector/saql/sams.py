@@ -68,6 +68,32 @@ class SAMS(object):
         if not query_def[1] in self.QUERY_DEF[query_type][query_def[0]]:
             raise ValueError('Query not applicable on these types: {0}'.format(query_def))
 
+    def select_candidate_classes(self, query):
+        """ Give all classes that match queries FROM clause
+
+            :param SaqlQuery query: the query
+            :rtype: list of inspector.models.base.Class
+        """
+        classes = []
+        for obj in self.parse_identifier(query.select_from):
+            classes += obj.classes
+        return classes
+
+    def select_candidate_methods(self, query):
+        """ Give all methods that match queries FROM clause
+
+            :param SaqlQuery query: the query
+            :rtype: list of inspector.models.base.Method
+        """
+        methods = []
+        if query.select_from_type != 'class':
+            candidate_classes = self.select_candidate_classes(query)
+        else:
+            candidate_classes = self.parse_identifier(query.select_from)
+        for cc in candidate_classes:
+            methods += cc.methods
+        return methods
+
     def run_query(self, query):
         if not self.project:
             raise ValueError('No project selected!')
@@ -79,18 +105,19 @@ class SAMS(object):
             sel = ['?', q.select_from_type]
             objects = []
             if q.is_select_classes():
-                classes = []
                 sel[0] = 'class'
                 self.verify_query(sel)
-                for obj in self.parse_identifier(q.select_from):
-                    classes += obj.classes
-                objects = classes
+                objects = self.select_candidate_classes(q)
             elif q.is_select_methods():
                 sel[0] = 'method'
+                self.verify_query(sel)
+                objects = self.select_candidate_methods(q)
             elif q.is_select_lines():
                 sel[0] = 'line'
+                self.verify_query(sel)
             elif q.is_select_instances():
                 sel[0] = 'instance'
+                self.verify_query(sel)
             else:
                 raise ValueError('Unsupported query type: {0}'.format(q.select_type))
 
@@ -101,7 +128,7 @@ class SAMS(object):
                 if not m:
                     raise ValueError('Invalid WHERE condition: {0}'.format(wcl))
                 fn_name = m.group(1)
-                fn_params = [self.parse_token(s) for s in m.group(2).split(',')]
+                fn_params = [self.parse_token(s) for s in m.group(2).split(',')] if m.group(2) else []
                 try:
                     fn_callable = self.QUERY_DEF['FUNCTIONS'][sel[0]][fn_name]
                 except KeyError:

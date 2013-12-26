@@ -711,6 +711,9 @@ class Method(Function):
         return fmt.format(acc=acc_rep, abs=abs_rep, bin=bin_rep, name=self.name, args=args_rep, ret=ret_name,
                           thr=thr_rep, method_name=method_name)
 
+    def __repr__(self):
+        return 'method:{0}'.format(self.qualified_name)
+
     def set_parent_class(self, parent_class):
         """
             :type parent_class: Class

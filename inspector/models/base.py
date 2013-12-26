@@ -132,12 +132,15 @@ class Project(LocatableInterface):
         if extension is not None:
             return self.filter_files(cond=lambda f: get_extension(f) in [e.strip() for e in extension.split(',')])
 
-    def get_file(self, path, is_qualified=False):
+    def get_file(self, path, is_qualified=None):
         """
             :param str path: source file path, can be relative, abstract, or in java dotted format
         """
         if not self._files:
             self.rescan_files()
+
+        if is_qualified is None:
+            is_qualified = not ('/' in path or '\\' in path)
 
         if is_qualified:
            # java dotted format
@@ -149,7 +152,7 @@ class Project(LocatableInterface):
                     found = True
                     break
             if not found:
-                raise KeyError('File not found in project source roots ({0}).'.format(unicode(self.source_roots)))
+                raise KeyError('File not found in project source roots: {0}'.format(path))
         else:
             rel_path = self.build_relative_path(path)
 
@@ -170,6 +173,40 @@ class Project(LocatableInterface):
 
         self.rescan_files(handler)
         handler.tear_down()
+
+    ####################
+    #  Find Utilities  #
+    ####################
+    def find_class(self, qualified_name):
+        p = qualified_name.split('.')
+        class_name = p[-1]
+        try:
+            class_file = self.get_file('.'.join(p[:-1]))
+        except KeyError:
+            # the user can omit the class_name if class_name == filename (e.g. a.b.ClassName.ClassName)
+            # TODO: consider other languages like python! they maybe need camel case conversion
+            class_file = self.get_file('.'.join(p))
+        return class_file.get_class(class_name)
+
+    def find(self, identifier):
+        """ Find the code object (file/class/method/etc.) specified by the
+             identifier in this project.
+
+            :param str identifier: object to find, e.g. 'class:a.b.X', 'file:a.b.f'
+        """
+        try:
+            id_type, id_val = identifier.split(':', 1)
+        except ValueError:
+            raise ValueError('Invalid identifer: {0}'.format(identifier))
+        if id_type == 'file':
+            return self.get_file(id_val)
+        if id_type == 'class':
+            return self.find_class(id_val)
+        if id_type == 'method':
+            ind = id_val.rfind('.')
+            method_class = self.find_class(id_val[:ind])
+            return method_class.get_method(id_val[ind+1:])
+        raise ValueError('Invalid identifier: {0}'.format(id_type))
 
     ############################
     #  File Loading & Parsing  #

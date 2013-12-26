@@ -49,3 +49,8 @@ class SAMSTest(unittest.TestCase):
 
         q4 = 'SELECT classes FROM class:com.g.issue.IssueFragment'
         self.assertRaises(ValueError, self.sams.run_query, q4)
+
+        q5 = "SELECT classes FROM project WHERE isSubclassOf('DialogFragment')"
+        r = self.sams.run_query(q5)
+        self.assertItemsEqual([c.qualified_name for c in r],
+                              ['com.g.issue.IssueFragment'])

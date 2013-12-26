@@ -24,6 +24,9 @@ class SaqlQuery(object):
             tp = t
         return tp
 
+    def is_select(self):
+        return True
+
     def is_select_classes(self):
         return self.select_type == 'classes'
 

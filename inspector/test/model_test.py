@@ -74,6 +74,10 @@ class LargeModelTest(unittest.TestCase):
         self.assertTrue(cls.source_file.filename.endswith('gissue/src/com/g/issue/IssueFragment.java'))
         self.assertEqual(cls.qualified_name, 'com.g.issue.IssueFragment')
 
+        # inheritance
+        self.assertEqual(cls.extends, ['DialogFragment'])
+        self.assertTrue(cls.is_subclass_of('DialogFragment'))
+
 
 if __name__ == '__main__':
     unittest.main()

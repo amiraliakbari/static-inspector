@@ -641,6 +641,12 @@ class Class(CodeBlock):
         """
         return find(self.methods, lambda m: m.name == name)
 
+    def is_subclass_of(self, parent_class):
+        # TODO: check better! its currently just by name (without even package)
+        if isinstance(parent_class, Class):
+            parent_class = parent_class.name
+        return parent_class in self.extends
+
 
 class Field(object):
     def __init__(self, name, field_type, parent_class, visibility=None, annotations=None, initializer=None,

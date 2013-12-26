@@ -1,27 +1,41 @@
 # -*- coding: utf-8 -*-
+import re
 from inspector.models.android import AndroidProject
 from inspector.models.base import Method
 from inspector.saql.saql_parser import SaqlParser
 
 
 class SAMS(object):
+    FN = {
+        'nameIs': lambda o, p: o.name == p,
+        'nameIsLike': lambda o, p: re.match(p, o.name) is not None,
+    }
     QUERY_DEF = {
         'SELECT': {
             'class': ['file', 'project'],
             'method': ['class', 'file', 'project'],
             'file': ['project'],
+            'line': [],
+            'instance': [],
         },
         'FUNCTIONS': {
-            'class': [
-                ('isSubClass', lambda c, parent: issubclass(c, parent)),
-            ],
-            'method': [
-                ('isAbstract', lambda m: m.abstract),
-                ('isPrivate', lambda m: m.access == Method.ACCESS.PRIVATE),
-                ('isProtected', lambda m: m.access == Method.ACCESS.PROTECTED),
-                ('isPackage', lambda m: m.access == Method.ACCESS.PACKAGE),
-                ('isPublic', lambda m: m.access == Method.ACCESS.PUBLIC),
-            ],
+            'class': {
+                'isSubclassOf': lambda c, parent: c.is_subclass_of(parent),
+                'nameIs': FN['nameIs'],
+                'nameIsLike': FN['nameIsLike'],
+            },
+            'method': {
+                'nameIs': FN['nameIs'],
+                'nameIsLike': FN['nameIsLike'],
+                'isAbstract': lambda m: m.abstract,
+                'isPrivate': lambda m: m.access == Method.ACCESS.PRIVATE,
+                'isProtected': lambda m: m.access == Method.ACCESS.PROTECTED,
+                'isPackage': lambda m: m.access == Method.ACCESS.PACKAGE,
+                'isPublic': lambda m: m.access == Method.ACCESS.PUBLIC,
+            },
+            'file': {},
+            'line': {},
+            'instance': {},
         }
     }
 
@@ -38,6 +52,18 @@ class SAMS(object):
             return (self.project.find(iden) for iden in identifier)
         return self.project.find(identifier)
 
+    def parse_token(self, token):
+        token = token.strip()
+        candidate_types = [int, float]
+        for tp in candidate_types:
+            try:
+                return tp(token)
+            except ValueError:
+                pass
+        if len(token) > 1 and token[0] == "'" and token[-1] == "'":
+            return str(token[1:-1])
+        return self.parse_identifier(token)
+
     def verify_query(self, query_def, query_type='SELECT'):
         if not query_def[1] in self.QUERY_DEF[query_type][query_def[0]]:
             raise ValueError('Query not applicable on these types: {0}'.format(query_def))
@@ -47,22 +73,44 @@ class SAMS(object):
             raise ValueError('No project selected!')
 
         q = SaqlParser.parse_query(query)
-        if q.is_select_classes():
-            classes = []
-            sel = ('class', q.select_from_type)
-            self.verify_query(sel)
-            for obj in self.parse_identifier(q.select_from):
-                classes += obj.classes
-            return classes
-        elif q.is_select_methods():
-            pass
-        elif q.is_select_instances():
-            pass
-        elif q.is_select_lines():
-            pass
-        else:
-            raise ValueError('Unsupported query type: {0}'.format(q.select_type))
-        return []
+
+        if q.is_select():
+            # first gathering all candidates
+            sel = ['?', q.select_from_type]
+            objects = []
+            if q.is_select_classes():
+                classes = []
+                sel[0] = 'class'
+                self.verify_query(sel)
+                for obj in self.parse_identifier(q.select_from):
+                    classes += obj.classes
+                objects = classes
+            elif q.is_select_methods():
+                sel[0] = 'method'
+            elif q.is_select_lines():
+                sel[0] = 'line'
+            elif q.is_select_instances():
+                sel[0] = 'instance'
+            else:
+                raise ValueError('Unsupported query type: {0}'.format(q.select_type))
+
+            # filtering by WHERE conditions
+            for wcl in q.where_conditions:
+                # TODO: support operators on functions too
+                m = re.match(r'^\s*(\w+)\s*\((.*?)\)\s*$', wcl)
+                if not m:
+                    raise ValueError('Invalid WHERE condition: {0}'.format(wcl))
+                fn_name = m.group(1)
+                fn_params = [self.parse_token(s) for s in m.group(2).split(',')]
+                try:
+                    fn_callable = self.QUERY_DEF['FUNCTIONS'][sel[0]][fn_name]
+                except KeyError:
+                    raise ValueError('Invalid function for {1} object: {0}'.format(fn_name, sel[0]))
+                objects = filter(lambda o: fn_callable(o, *fn_params), objects)
+
+            return objects
+
+        raise ValueError('Unsupported query')
 
     def run_action(self, action):
         if action.startswith(r'\c '):

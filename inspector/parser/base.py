@@ -3,10 +3,10 @@ from inspector.utils.strings import quoted
 
 
 class Token(object):
-    def __init__(self):
-        self.content = None
-        self.type = None
-        self.model = None
+    def __init__(self, content=None, t_type=None, model=None):
+        self.content = content
+        self.type = t_type
+        self.model = model
 
     def normalize_content(self):
         if self.content:

@@ -1,13 +1,18 @@
 # -*- coding: utf-8 -*-
 import re
+import logging
 
 from inspector.parser.base import Token, LanguageSpecificParser
 from inspector.models.base import (Project, SourceFile, Class, Method, Import, Comment, Statement, ExceptionBlock,
-                                   CodeBlock, ForBlock, WhileBlock, IfBlock, Field, SwitchBlock)
+                                   CodeBlock, ForBlock, WhileBlock, IfBlock, Field, SwitchBlock, Function)
 from inspector.models.consts import Language
 from inspector.models.exceptions import ParseError
 from inspector.utils.arrays import find
 from inspector.utils.lang import enum
+
+
+logging.basicConfig(filename='logs.log', filemode='w', level=logging.DEBUG)
+logger = logging.getLogger('java_parser')
 
 
 class JavaProject(Project):
@@ -22,9 +27,47 @@ class JavaProject(Project):
         return SourceFile(abs_path, package=None)
 
 
+class IsNotBreaking(object):
+    """ Used to detect {}; in (), i.e. no-blocking ones
+    """
+
+    def __init__(self, breakings=None):
+        self.breakings = breakings or ['{', '}', ';']
+        self.par_open = 0
+
+    def __call__(self, ch):
+        if ch == '(':
+            self.par_open += 1
+        elif ch == ')':
+            self.par_open -= 1
+        else:
+            if not self.par_open and ch in self.breakings:
+                return False
+        return True
+
+
+class IsNotStatementBreaking(object):
+    """ Used to detect {}; in (), i.e. no-blocking ones
+    """
+
+    def __init__(self, initial_open=0):
+        self.par_open = initial_open
+
+    def __call__(self, ch):
+        if ch in ['(', '{', '[']:
+            self.par_open += 1
+        elif ch in [')', '}', ']']:
+            self.par_open -= 1
+        else:
+            if not self.par_open and ch == ';':
+                return False
+        return True
+
+
 class JavaSourceFile(SourceFile):
     def __init__(self, filename, package=None):
-        self.interfaces = []
+        self.interfaces = []  # shows Interfaces defined directly in this source file
+                              #  this is in addition to self.classes, java specific
         super(JavaSourceFile, self).__init__(filename, package=package)
 
     def __unicode__(self):
@@ -49,15 +92,33 @@ class JavaSourceFile(SourceFile):
     #############
     #  Parsing  #
     #############
+    def add_statement(self, t, is_special_statement=False):
+        t.type = 'statement'
+        t.model = JavaStatement.try_parse(t.content)
+        if t.model:
+            if not is_special_statement:
+                ct = self.find_context_top()
+                if ct.isinstance(CodeBlock):
+                    ct.model.add_statement(t.model)
+                else:
+                    raise ParseError(u'Statement is not in a block: {0}.'.format(t.model))
+        else:
+            raise ParseError(u'Invalid statement: "{0}"'.format(t.content))
+
+    def finalize_token(self, t):
+        if t is not None:
+            t.normalize_content()
+            logger.info('Token: %s', t.model or t.content)
+            if hasattr(t.model, 'source_file'):
+                t.model.source_file = self
+        return t
+
     def next_token(self):
-        """
-            :return: next token, parsed
-            :rtype: Token
-        """
         t = Token()
         self.skip_spaces()
 
-        prefix = self.read_ahead(2)  # to detect comments
+        # Comments #
+        prefix = self.read_ahead(2)
         if prefix == '//':
             t.type = 'comment'
             l1 = self._cur_line
@@ -75,38 +136,35 @@ class JavaSourceFile(SourceFile):
             t.model.ending_line = l2
 
         else:
-
-            class IsNotBreaking(object):
-                def __init__(self):
-                    self.par_open = 0
-
-                def __call__(self, ch):
-                    if ch == '(':
-                        self.par_open += 1
-                    elif ch == ')':
-                        self.par_open -= 1
-                    else:
-                        if not self.par_open and ch in ['{', '}', ';']:
-                            return False
-                    return True
-
+            # read up to the next blocking {};
             l1 = self._cur_line
-            t.content = self.read(cond=IsNotBreaking())
+            first_head = self.current_head()  # just if needed for rewinding
+            t.content = self.read(cond=lambda ch: ch not in ['{', '}', ';'])
+            # in case of for declaration, reread to skip ; inside parentheses
+            if t.content.startswith('for'):
+                self.rewind_to(first_head)
+                t.content = self.read(cond=IsNotBreaking())
+            # gathering some more data for error reporting, just in case
             l2 = self._cur_line
-            first_head = self.current_head()
 
+            # finding parent blocks #
             # TODO: is it necessary to use parent_*block* here?
             parent_class = self.find_context_top(lambda x: x.isinstance(Class))
             if parent_class:
                 parent_class = parent_class.model
+            parent_function = self.find_context_top(lambda x: x.isinstance(Function))
+            if parent_function:
+                parent_function = parent_function.model
             parent_block = self.find_context_top(lambda x: x.isinstance(CodeBlock))
             if parent_block:
                 parent_block = parent_block.model
 
             ch = self.next_char()
+
+            # End-Control Token #
             if ch == '}':
                 if t.content.strip():
-                    raise ParseError(u'Unexpected token: } in "{0}".'.format(t.content))
+                    raise ParseError(u'Unexpected token: }} in "{0}".'.format(t.content))
                 t.type = 'end-control'
                 t.content = '}'
 
@@ -128,13 +186,13 @@ class JavaSourceFile(SourceFile):
                 except IndexError:
                     raise ParseError(u'Unmatched }.')
 
+            # Control Token #
             elif ch == '{':
                 t.type = 'control'
                 t.content = t.content.strip()
                 push = False
                 repush = False
 
-                # Exception
                 if t.content == 'try':
                     t.model = ExceptionBlock()
                     push = True
@@ -189,6 +247,20 @@ class JavaSourceFile(SourceFile):
                     if not t.model:
                         t.model = JavaClass.try_parse(t.content, {u'parent_class': parent_class})
                     if not t.model:
+                        t.model = JavaAnonymousClass.try_parse(t.content, {u'parent_class': parent_class})
+                        if t.model:
+                            parent_function.nested_classes.append(t.model)
+                            # adding the containing statement
+                            ch = self.current_head()
+                            st_content = t.content + ' { ' + self.read(cond=IsNotStatementBreaking(initial_open=1))
+                            tt = Token(content=st_content)
+                            self.add_statement(tt)
+                            self.finalize_token(tt)
+                            # marking the statement as pre-read
+                            self.statement_pre_read = self.current_head()
+                            # back to the start of the AnonymousClass
+                            self.rewind_to(ch)
+                    if not t.model:
                         t.model = JavaSynchronizedBlock.try_parse(t.content)
                         if t.model:
                             top = self.find_context_top(lambda x: x.isinstance(CodeBlock))
@@ -197,34 +269,10 @@ class JavaSourceFile(SourceFile):
                         t.model = JavaInterface.try_parse(t.content, {u'parent_class': parent_class})
                     if not t.model:
                         t.model = JavaMethod.try_parse(t.content, {u'parent_class': parent_class})
-                    if not t.model:
-
-                        class OpenClassDef(object):
-                            def __init__(self):
-                                self.par_open = 0
-
-                            def __call__(self, ch):
-                                if ch == '{':
-                                    self.par_open += 1
-                                elif ch == '}':
-                                    self.par_open -= 1
-                                    if self.par_open == 0:
-                                        return False
-                                return True
-
-                        current_head = self.current_head()
-                        self.rewind_to(first_head)
-                        s = self.read(cond=OpenClassDef(), beyond=1)
-                        self.skip_spaces()
-                        if self.next_char() != ';' or not re.match(r'^.+\s*=\s*new\s+.+\(.*\)$', t.content, re.DOTALL):
-                            t.model = None
-                            self.rewind_to(current_head)
-                        else:
-                            t.model = ClassDefiningStatement('%s %s;' % (t.content, s))
-                            push = False
 
                     if not t.model:
                         raise ParseError(u'Token can not be parsed: "{0}".'.format(t.content))
+                # Exception
 
                 if repush:
                     self._context.append(self._last_popped)
@@ -238,75 +286,76 @@ class JavaSourceFile(SourceFile):
                 t.type = 'statement'
                 t.content += ';'
 
-                is_special_statement = False
-
-                # package
-                PACKAGE_RE = re.compile(r'package\s+([a-zA-Z0-9_.]+)\s*;')
-                pm = PACKAGE_RE.match(t.content)
-                if pm:
-                    self.package = pm.group(1).strip()  # TODO: check with file path
-                    is_special_statement = True
-
-                # TODO: code blocks (like if/...) are not added to cases in switch (and maybe neither to If/...)
-                # case
-                sw = self.find_context_top(lambda x: x.isinstance(SwitchBlock))
-                if sw:
-                    case_pattern = r'case\s+(.+?)\s*:'
-                    fa = re.findall(case_pattern, t.content)
-                    if fa:
-                        for case_cond in fa:
-                            sw.model.add_case(case_cond)
-                    t.content = re.sub(case_pattern, '', t.content).strip()
-
-                    if re.match(r'^default\s*:', t.content):
-                        sw.model.add_default()
-                        t.content = t.content[t.content.find(':') + 1:].strip()
-
-                    if re.match(r'^break\s*;$', t.content):
-                        sw.model.add_break()
-                        t.model = sw.model
-                    elif re.match(r'\breturn\b.*;', t.content, re.DOTALL):
-                        sw.model.add_return()
-                    elif not t.content.strip():
-                        t.model = sw.model
-
-                # if without {
-                if t.content.startswith('if ') or t.content.startswith('if('):
-                    t.model = IfBlock(t.content[3:].strip()[:-1])
-                    t.model.starting_line = l1
-                    t.model.ending_line = l2
-                    t.type = 'control'
-                    self._last_popped = t
-
-                # class field
-                if not t.model and parent_class:
-                    if parent_block == parent_class:
-                        # fields must be defined directly in classes
-                        t.model = JavaField.try_parse(t.content, {u'parent_class': parent_class})
-                        if t.model:
-                            if isinstance(t.model, list):
-                                for f in t.model:
-                                    parent_class.add_statement(f)
-                                t.model = t.model[0]
-                            else:
-                                parent_class.add_statement(t.model)
-
-                # import
-                if not t.model:
-                    t.model = JavaImport.try_parse(t.content)
-
-                # normal statement
-                if not t.model:
-                    t.model = JavaStatement.try_parse(t.content)
-                    if t.model:
-                        if not is_special_statement:
-                            ct = self.find_context_top()
-                            if ct.isinstance(CodeBlock):
-                                ct.model.add_statement(t.model)
-                            else:
-                                raise ParseError(u'Statement is not in a block: {0}.'.format(t.model))
+                if self.statement_pre_read is not None:
+                    ch = self.current_head()
+                    if ch > self.statement_pre_read + 1:
+                        raise AssertionError('bad pre-read! pre-read: {0}, current: {1}'.format(self.statement_pre_read,
+                                                                                                ch))
                     else:
-                        raise ParseError(u'Invalid statement: "{0}"'.format(t.content))
+                        logger.info('Statement already read, skipping: %s', t.content)
+                        if self.statement_pre_read == ch - 1:
+                            self.statement_pre_read = None
+                else:
+                    is_special_statement = False
+
+                    # package
+                    PACKAGE_RE = re.compile(r'package\s+([a-zA-Z0-9_.]+)\s*;')
+                    pm = PACKAGE_RE.match(t.content)
+                    if pm:
+                        self.package = pm.group(1).strip()  # TODO: check with file path
+                        is_special_statement = True
+
+                    # TODO: code blocks (like if/...) are not added to cases in switch (and maybe neither to If/...)
+                    # case
+                    sw = self.find_context_top(lambda x: x.isinstance(SwitchBlock))
+                    if sw:
+                        case_pattern = r'case\s+(.+?)\s*:'
+                        fa = re.findall(case_pattern, t.content)
+                        if fa:
+                            for case_cond in fa:
+                                sw.model.add_case(case_cond)
+                        t.content = re.sub(case_pattern, '', t.content).strip()
+
+                        if re.match(r'^default\s*:', t.content):
+                            sw.model.add_default()
+                            t.content = t.content[t.content.find(':') + 1:].strip()
+
+                        if re.match(r'^break\s*;$', t.content):
+                            sw.model.add_break()
+                            t.model = sw.model
+                        elif re.match(r'\breturn\b.*;', t.content, re.DOTALL):
+                            sw.model.add_return()
+                        elif not t.content.strip():
+                            t.model = sw.model
+
+                    # if without {
+                    if t.content.startswith('if ') or t.content.startswith('if('):
+                        t.model = IfBlock(t.content[3:].strip()[:-1])
+                        t.model.starting_line = l1
+                        t.model.ending_line = l2
+                        t.type = 'control'
+                        self._last_popped = t
+
+                    # class field
+                    if not t.model and parent_class:
+                        if parent_block == parent_class:
+                            # fields must be defined directly in classes
+                            t.model = JavaField.try_parse(t.content, {u'parent_class': parent_class})
+                            if t.model:
+                                if isinstance(t.model, list):
+                                    for f in t.model:
+                                        parent_class.add_statement(f)
+                                    t.model = t.model[0]
+                                else:
+                                    parent_class.add_statement(t.model)
+
+                    # import
+                    if not t.model:
+                        t.model = JavaImport.try_parse(t.content)
+
+                    # normal statement
+                    if not t.model:
+                        self.add_statement(t, is_special_statement)
 
             elif ch is None:
                 t = None
@@ -316,12 +365,7 @@ class JavaSourceFile(SourceFile):
 
         # final cares
         self.skip_spaces()
-        if t:
-            t.normalize_content()
-            # print ">>>", t.model, '\t', t.content
-            if hasattr(t.model, 'source_file'):
-                t.model.source_file = self
-        return t
+        return self.finalize_token(t)
 
     def _save_model(self, token_model):
         if isinstance(token_model, JavaInterface):
@@ -343,6 +387,8 @@ class JavaClass(Class, LanguageSpecificParser):
         # TODO: should we set package from "package ...;" line or from source file?
         if len(self.extends) > 1:
             raise ParseError(u'Multiple inheritance is not supported in Java.')
+        if isinstance(access, str) or isinstance(access, unicode):
+            access = JavaClass.parse_access(access)
         self.access = access or self.ACCESS.PACKAGE
         self.implements = implements or []  # TODO: set real Interface reference
 
@@ -383,7 +429,32 @@ class JavaClass(Class, LanguageSpecificParser):
                          parent_class=opts.get(u'parent_class'),
                          extends=ext_str,
                          implements=[s.strip() for s in imp_str.split(',')] if imp_str else [],
-                         access=JavaClass.parse_access(acc_str))
+                         access=acc_str)
+
+
+class JavaAnonymousClass(JavaClass):
+    PATTERN = re.compile(r'^(?P<lead>(.*?)[= (,])?new\s+(?P<type>[a-zA-Z0-9._<>]+)\s*\((?P<constructor_params>.*?)\)$', re.DOTALL)
+
+    def __init__(self, name, constructor_parameters=None, **kwargs):
+        kwargs['access'] = 'PRIVATE'  # we assume that anonymous classes access is PRIVATE
+        super(JavaAnonymousClass, self).__init__(name, **kwargs)
+        self.constructor_parameters = constructor_parameters or []
+
+    @classmethod
+    def try_parse(cls, string, opts=None):
+        opts = opts or {}
+        cm = cls.PATTERN.match(string)
+        if not cm:
+            return None
+
+        parent_type_str = cm.group('type')
+        params_str = cm.group('constructor_params')
+        params_strs = params_str.split(',') if params_str else []
+        return cls(name='',
+                   constructor_parameters=[p.strip() for p in params_strs],
+                   parent_class=opts.get(u'parent_class'),
+                   extends=parent_type_str,  # TODO: detect this is parent class or interface, currently just class
+                   )
 
 
 class JavaInterface(JavaClass):
@@ -419,7 +490,7 @@ class JavaInterface(JavaClass):
         return JavaInterface(name=cm.group(2),
                              parent_class=opts.get(u'parent_class'),
                              implements=[s.strip() for s in imp_str.split(',')] if imp_str else [],
-                             access=JavaClass.parse_access(acc_str))
+                             access=acc_str)
 
 
 class JavaField(Field, LanguageSpecificParser):

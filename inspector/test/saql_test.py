@@ -60,8 +60,8 @@ class SAMSTest(unittest.TestCase):
         #TODO: parseError: similar for inline class IssuesFragment.IssuePager
         q1 = 'SELECT methods FROM class:com.g.issue.IssueFragment'
         r = self.sams.run_query(q1)
-        methods = ['onCreate', 'onActivityCreated', 'onCreateView', 'onViewCreated', 'updateHeader', 'refreshIssue',
-                   'RefreshIssueTask', 'onException', 'onSuccess', 'updateList', 'onDialogResult', 'updateStateItem',
+        methods = ['onCreate', 'onActivityCreated', 'onCreateView', 'onViewCreated', 'updateHeader',
+                   'refreshIssue', 'updateList', 'onDialogResult', 'updateStateItem',
                    'onPrepareOptionsMenu', 'onCreateOptionsMenu', 'onActivityResult', 'shareIssue',
                    'openPullRequestCommits', 'onOptionsItemSelected']
         self.assertItemsEqual([f.name for f in r], methods)
@@ -76,7 +76,7 @@ class SAMSTest(unittest.TestCase):
 
         q4 = "SELECT methods FROM project"
         r = self.sams.run_query(q4)
-        self.assertEqual(len(r), 18+16)  # should be 17+15 after parse corrections!
+        self.assertEqual(len(r), 15+14)
 
         q5 = "SELECT methods FROM project WHERE nameIsLike('^.*Issue$')"
         r = self.sams.run_query(q5)

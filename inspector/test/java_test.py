@@ -71,6 +71,31 @@ class TestJavaParse(unittest.TestCase):
         self.assertEqual(account.get_method('abs').lines_count, 8)
         self.assertEqual(sf.next_token(), None)
 
+    def test_parse_anonymous_class(self):
+        sf = SourceFile.build_source_file(os.path.join(self.data_path, 'sample_sources', '7.java'))
+        self.assertEqual(unicode(sf), u'Java SourceFile: 1 classes')
+        aclass1 = sf.get_class('AnonymousClass1')
+        self.assertIsNotNone(aclass1)
+        self.assertEqual(len(aclass1.fields), 0)
+        self.assertEqual(len(aclass1.methods), 4)
+        mth1 = aclass1.get_method('createPager')
+        self.assertIsNotNone(mth1)
+        self.assertEqual(len(mth1.nested_classes), 1)
+        self.assertEqual(len(mth1.nested_functions), 0)
+        mth2 = aclass1.get_method('f')
+        self.assertIsNotNone(mth2)
+        self.assertEqual(len(mth2.nested_classes), 0)
+        self.assertEqual(len(mth2.nested_functions), 0)
+        mth3 = aclass1.get_method('callF')
+        self.assertIsNotNone(mth3)
+        self.assertEqual(len(mth3.nested_functions), 0)
+        self.assertItemsEqual([c.extends for c in mth3.nested_classes], [['java.util.AClass'], ['java.util.BClass']])
+        self.assertEqual(len(mth3.nested_classes), 2)
+        mth4 = aclass1.get_method('refreshIssue')
+        self.assertIsNotNone(mth4)
+        self.assertEqual(len(mth4.nested_classes), 1)
+        self.assertEqual(len(mth4.nested_functions), 0)
+
 
 class TestParseInternals(unittest.TestCase):
     def test_visibility_parse(self):

@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import re
+import logging
 
 from inspector.models.consts import Language
 from inspector.parser.file_tokenizer import FileTokenizer
@@ -8,6 +9,10 @@ from inspector.utils.arrays import find
 from inspector.utils.files import get_extension
 from inspector.utils.lang import enum
 from inspector.utils.strings import summarize, has_word
+
+
+logging.basicConfig(filename='logs.log', filemode='w', level=logging.DEBUG)
+logger = logging.getLogger('models_base')
 
 
 class LocatableInterface(object):
@@ -366,6 +371,14 @@ class Coverable(object):
 
 class SourceFile(File, FileTokenizer, Coverable):
     def __init__(self, filename, package=None):
+        """ Create a parsed SourceFile model from the file
+             note: parsing is done in the constructor
+             note: if file's language can not be detected, parsing is not done
+
+            :param str filename: file to e read and parsed
+            :param package: the containing package of this file
+        """
+
         super(SourceFile, self).__init__(filename)
         Coverable.__init__(self)
         FileTokenizer.__init__(self)
@@ -409,19 +422,28 @@ class SourceFile(File, FileTokenizer, Coverable):
 
     # noinspection PyShadowingBuiltins
     def load_content(self, reload=True):
+        """ Read the content of this SourceFile, and fully parse it if the
+             programming language is detected
+
+            :param bool reload: wheter to reload the content if it is already loaded before
+        """
         if not reload and self.loaded:
             return
         super(SourceFile, self).load_content(reload=reload)
         self.set_content(self.file_content)
         if self.language_detected:
+            # TODO: parse should be done only if content is not loaded yet or reload is True
             self._parse()
 
     ##########################
     #  Model Access Helpers  #
     ##########################
     def get_class(self, name):
-        """
-            :rtype: Class
+        """ Return the class matching the given name from this SourceFile
+             note: None is returned if there is no such class
+
+            :param str name: name of the class
+            :rtype: Class or None
         """
         return find(self.classes, lambda m: m.name == name)
 
@@ -462,6 +484,14 @@ class SourceFile(File, FileTokenizer, Coverable):
         return p
 
     def next_token(self):
+        """ Get the next language-specific token of the file (relative to read head)
+             This abstract method is where subclasses define language-specific parsing
+             rules and grammar.
+             Tokens are constructs like Class, Function, Method, IfBlock, Statement, etc.
+
+            :return: next token, parsed
+            :rtype: Token
+        """
         raise NotImplementedError()
 
     def _save_model(self, token_model):
@@ -477,9 +507,13 @@ class SourceFile(File, FileTokenizer, Coverable):
 
     def _parse(self):
         """ Extract SourceFile data by parsing the code, result is saved in object's attributes.
+             General parsing algorithm is in this method, but the language specific (the main)
+             part is done using the abstract self.next_token() method
         """
+        logger.debug('Parsing file: %s', self.filename)
         self._context = []
         self._last_popped = None
+        self.statement_pre_read = None
         while self.can_read():
             token = self.next_token()
             if token.model is None:
@@ -491,7 +525,10 @@ class SourceFile(File, FileTokenizer, Coverable):
 
     @staticmethod
     def build_source_file(filename):
-        """ Create a parsed SourceFile, given the full filename.
+        """ Create a parsed SourceFile, given the full disk filename
+
+            :param str filename: the disk filename of the target file
+            :rtype: JavaSourceFile or PythonSourceFile
         """
         package = None  # TODO: auto-detect package
         lng = File(filename).detect_language()
@@ -609,6 +646,10 @@ class Class(CodeBlock):
     @property
     def qualified_name(self):
         # TODO: use self.package instead of self.source_file
+
+        if not self.source_file.project_path:
+            return self.name
+
         p = os.path.splitext(self.source_file.project_path)[0].split('/')
         # TODO: check project better!
         # project = self.source_file.project
@@ -636,8 +677,11 @@ class Class(CodeBlock):
             raise ValueError('Invalid statement inside a class: "{0}".'.format(unicode(statement)))
 
     def get_method(self, name):
-        """
-            :rtype: Method
+        """ Return the method matching the given name from this Class
+             note: None is returned if there is no such method
+
+            :param str name: name of the method
+            :rtype: Method or None
         """
         return find(self.methods, lambda m: m.name == name)
 
@@ -698,6 +742,8 @@ class Method(Function):
         self.binding = binding or self.BINDING.UNKNOWN
         self.abstract = abstract
         self.throws = throws or []
+        self.nested_classes = []
+        self.nested_functions = []
 
     def __unicode__(self):
         args_rep = u', '.join([u'{0} {1}'.format(x, y) for x, y in self.arguments])
@@ -793,7 +839,7 @@ class Statement(object):
         self.code = code
 
     def __unicode__(self):
-        return u'Statement: {0}'.format(summarize(self.code, max_len=30))
+        return u'Statement: {0}'.format(summarize(self.code, max_len=0))
 
     def __str__(self):
         return unicode(self)
@@ -806,6 +852,9 @@ class IfBlock(CodeBlock):
         self.mode = None
         self.elifs = []
         self.else_block = CodeBlock()
+
+    def __unicode__(self):
+        return u'IfBlock:\n\t' + u'\n\t'.join([unicode(s) for s in self.statements])
 
     def add_elif(self, condition):
         self.elifs.append((condition, CodeBlock()))
@@ -834,7 +883,6 @@ class SwitchBlock(CodeBlock):
         self.active_cases = []
 
     def add_case(self, case_expr):
-        # noinspection PyUnresolvedReferences
         self.active_cases.append(case_expr)
         self.case_orders.append(case_expr)
 

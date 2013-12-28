@@ -4,7 +4,7 @@ import os
 import sys
 import time
 
-sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'inspector'))
+sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', '..', 'static-inspector'))
 from inspector.saql.sams import SAMS
 
 

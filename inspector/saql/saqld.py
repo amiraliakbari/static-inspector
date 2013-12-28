@@ -5,7 +5,7 @@ import sys
 import time
 import socket
 
-sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'inspector'))
+sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', '..', 'static-inspector'))
 from inspector.saql.sams import SAMS
 
 
@@ -16,20 +16,22 @@ BUFFER_SIZE = 102400  # Normally 1024, but we want fast response
 
 if __name__ == '__main__':
     sams = SAMS()
-
+    print "Server Up!"
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.bind((TCP_IP, TCP_PORT))
     s.listen(1)
 
+    print "Waiting for client connection..."
     conn, addr = s.accept()
-    print "Server Up!"
+    print "Client connected!"
+
     while 1:
         data = conn.recv(BUFFER_SIZE)
         if not data:
             break
         print "received data:", data
 
-        qs = data
+        qs = data.strip()
         if qs == '\q':
             break
         try:
@@ -37,13 +39,14 @@ if __name__ == '__main__':
             result = sams.run(qs)
             d = time.time() - start_time
         except ValueError as e:
-            print('ERROR: {0}'.format(e.message))
+            result = 'ERROR: {0}'.format(e.message)
+            d = 0
+
+        if result is not None:
+            conn.send(str(result))
         else:
-            if result is not None:
-                conn.send(str(result))
-            else:
-                conn.send('None')
-            print('{0:.1f}ms, {1} chars sent'.format(d * 1000, len(result)))
+            conn.send('None')
+        print('{0:.1f}ms, {1} chars sent'.format(d * 1000, len(result)))
 
     print('bye!')
     conn.close()

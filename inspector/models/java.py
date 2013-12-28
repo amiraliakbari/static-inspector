@@ -111,6 +111,8 @@ class JavaSourceFile(SourceFile):
             logger.info('Token: %s', t.model or t.content)
             if hasattr(t.model, 'source_file'):
                 t.model.source_file = self
+            if self.sw and t.model:
+                self.sw.model.add_statement(t.model)
         return t
 
     def next_token(self):
@@ -146,6 +148,7 @@ class JavaSourceFile(SourceFile):
                 t.content = self.read(cond=IsNotBreaking())
             # gathering some more data for error reporting, just in case
             l2 = self._cur_line
+            logger.debug('CONTENT:'+t.content if t.content is not None else '<NONE>')
 
             # finding parent blocks #
             # TODO: is it necessary to use parent_*block* here?
@@ -158,6 +161,7 @@ class JavaSourceFile(SourceFile):
             parent_block = self.find_context_top(lambda x: x.isinstance(CodeBlock))
             if parent_block:
                 parent_block = parent_block.model
+            self.sw = self.find_context_top(lambda x: x.isinstance(SwitchBlock))
 
             ch = self.next_char()
 
@@ -173,7 +177,7 @@ class JavaSourceFile(SourceFile):
                     tmp = self.context_pop()
 
                     if tmp.isinstance(SwitchBlock):
-                        sw = tmp.model
+                        self.sw = tmp.model
                         # print '(((((((((((((((('
                         # print sw.condition
                         # for k in sw.case_orders:
@@ -298,38 +302,40 @@ class JavaSourceFile(SourceFile):
                 else:
                     is_special_statement = False
 
-                    # package
                     PACKAGE_RE = re.compile(r'package\s+([a-zA-Z0-9_.]+)\s*;')
                     pm = PACKAGE_RE.match(t.content)
-                    if pm:
+
+                    # case
+                    if self.sw:
+                        logger.warning(t.content)
+
+                        m = re.match(r'^case\s+(?P<cond>.+?)\s*:', t.content)
+                        if m:
+                            self.sw.model.add_case(m.group('cond'))
+                            t = None
+
+                        elif re.match(r'^default\s*:', t.content):
+                            self.sw.model.add_default()
+                            t = None
+
+                        elif re.match(r'^break\s*;$', t.content):
+                            self.sw.model.add_break()
+                            t = None
+
+                        # elif re.match(r'\breturn\b.*;', t.content, re.DOTALL):
+                        #     self.sw.model.add_return()
+
+                        if t is None:
+                            self.rewind_to(first_head)
+                            self.read(find=':', beyond=1)
+
+                    # package
+                    elif pm:
                         self.package = pm.group(1).strip()  # TODO: check with file path
                         is_special_statement = True
 
-                    # TODO: code blocks (like if/...) are not added to cases in switch (and maybe neither to If/...)
-                    # case
-                    sw = self.find_context_top(lambda x: x.isinstance(SwitchBlock))
-                    if sw:
-                        case_pattern = r'case\s+(.+?)\s*:'
-                        fa = re.findall(case_pattern, t.content)
-                        if fa:
-                            for case_cond in fa:
-                                sw.model.add_case(case_cond)
-                        t.content = re.sub(case_pattern, '', t.content).strip()
-
-                        if re.match(r'^default\s*:', t.content):
-                            sw.model.add_default()
-                            t.content = t.content[t.content.find(':') + 1:].strip()
-
-                        if re.match(r'^break\s*;$', t.content):
-                            sw.model.add_break()
-                            t.model = sw.model
-                        elif re.match(r'\breturn\b.*;', t.content, re.DOTALL):
-                            sw.model.add_return()
-                        elif not t.content.strip():
-                            t.model = sw.model
-
                     # if without {
-                    if t.content.startswith('if ') or t.content.startswith('if('):
+                    elif t.content.startswith('if ') or t.content.startswith('if('):
                         t.model = IfBlock(t.content[3:].strip()[:-1])
                         t.model.starting_line = l1
                         t.model.ending_line = l2
@@ -337,7 +343,7 @@ class JavaSourceFile(SourceFile):
                         self._last_popped = t
 
                     # class field
-                    if not t.model and parent_class:
+                    elif not t.model and parent_class:
                         if parent_block == parent_class:
                             # fields must be defined directly in classes
                             t.model = JavaField.try_parse(t.content, {u'parent_class': parent_class})
@@ -350,12 +356,15 @@ class JavaSourceFile(SourceFile):
                                     parent_class.add_statement(t.model)
 
                     # import
-                    if not t.model:
+                    if t and not t.model:
                         t.model = JavaImport.try_parse(t.content)
 
                     # normal statement
-                    if not t.model:
+                    if t and not t.model:
                         self.add_statement(t, is_special_statement)
+
+                    if t and not t.model:
+                        logger.error("Can not parse: %s", t.content)
 
             elif ch is None:
                 t = None
@@ -472,6 +481,7 @@ class JavaInterface(JavaClass):
         if isinstance(statement, Statement):
             code = statement.code.strip()
             if code.endswith(';'):
+                logger.warning('Try interface: `%s`', code)
                 m = JavaMethod.try_parse(code[:-1], {'parent_class': self})
                 if m:
                     self.abstract_methods.append(m)
@@ -576,6 +586,15 @@ class JavaMethod(Method, LanguageSpecificParser):
         throw_str = fm.group(8)
         args_str = fm.group(7)
 
+        acc_str = fm.group(2)
+        ret_str = fm.group(5)
+        if acc_str:
+            acc_str = acc_str.strip()
+        if ret_str:
+            ret_str = ret_str.strip()
+        if not Method.parse_access(acc_str):
+            ret_str, acc_str = acc_str, ret_str
+
         # method name can not be a reserved word
         if method_name in ['synchronized', 'switch']:
             return None
@@ -583,10 +602,10 @@ class JavaMethod(Method, LanguageSpecificParser):
         m = JavaMethod(parent_class,
                        name=method_name,
                        arguments=[split_arg(s) for s in args_str.split(',')] if args_str else [],
-                       return_type=fm.group(5),
+                       return_type=ret_str,
                        synchronized=fm.group(4),
                        binding=Method.parse_binding(fm.group(3)),
-                       access=Method.parse_access(fm.group(2), default=Method.ACCESS.PACKAGE),
+                       access=Method.parse_access(acc_str, default=Method.ACCESS.PACKAGE),
                        throws=[s.strip() for s in throw_str.split(',')] if throw_str else None)
 
         annotations = fm.group(1)

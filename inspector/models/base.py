@@ -514,8 +514,11 @@ class SourceFile(File, FileTokenizer, Coverable):
         self._context = []
         self._last_popped = None
         self.statement_pre_read = None
+        self.sw = None
         while self.can_read():
             token = self.next_token()
+            if token is None:
+                continue
             if token.model is None:
                 continue
             if self.find_context_top(cond=lambda x: x != token and x.isinstance(CodeBlock)) is None:
@@ -941,16 +944,20 @@ class ExceptionBlock(CodeBlock):
 
 
 class ForBlock(CodeBlock):
-    pass
+    def __unicode__(self):
+        return u'ForBlock'
 
 
 class WhileBlock(CodeBlock):
-    pass
+    def __unicode__(self):
+        return u'WhileBlock'
 
 
 class DoWhileBlock(WhileBlock):
-    pass
+    def __unicode__(self):
+        return u'DoWhileBlock'
 
 
 class WithBlock(CodeBlock):
-    pass
+    def __unicode__(self):
+        return u'WithBlock'

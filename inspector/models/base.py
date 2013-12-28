@@ -885,12 +885,15 @@ class SwitchBlock(CodeBlock):
         self.default = CodeBlock()
         self.active_cases = []
 
+    def __unicode__(self):
+        return u'SwitchBlock: {0} cases'.format(len(self.cases))
+
     def add_case(self, case_expr):
         self.active_cases.append(case_expr)
         self.case_orders.append(case_expr)
 
     def add_break(self):
-        self.active_cases = []
+        self.mode = 'break'
 
     def add_return(self):
         self.mode = 'return'
@@ -899,6 +902,11 @@ class SwitchBlock(CodeBlock):
         self.active_cases = 'default'
 
     def add_statement(self, statement):
+        if statement and isinstance(statement, Statement) and statement.code:
+            if re.match(r'^break\s*;$', statement.code.strip()):
+                self.mode = 'break'
+            if re.match(r'^return\b.*;$', statement.code.strip(), re.DOTALL):
+                self.mode = 'return'
         if not self.active_cases and not self.mode:
             raise ValueError('Statement not in a case: {0}.'.format(unicode(statement)))
         if self.active_cases == 'default':
@@ -909,6 +917,9 @@ class SwitchBlock(CodeBlock):
                     self.cases[case] = CodeBlock()
                 self.cases[case].add_statement(statement)
             if self.mode == 'return':
+                self.mode = ''
+                self.active_cases = []
+            if self.mode == 'break':
                 self.mode = ''
                 self.active_cases = []
 

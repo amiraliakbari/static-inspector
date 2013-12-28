@@ -148,6 +148,7 @@ class JavaSourceFile(SourceFile):
                 t.content = self.read(cond=IsNotBreaking())
             # gathering some more data for error reporting, just in case
             l2 = self._cur_line
+            logger.debug('='*40)
             logger.debug('CONTENT:'+t.content if t.content is not None else '<NONE>')
 
             # finding parent blocks #
@@ -164,6 +165,12 @@ class JavaSourceFile(SourceFile):
             self.sw = self.find_context_top(lambda x: x.isinstance(SwitchBlock))
 
             ch = self.next_char()
+            if self.sw:
+                logger.debug('IN a switch: %s', self.sw)
+                m1 = re.match(r'^case\s+(?P<cond>.+?)\s*:', t.content)
+                m2 = re.match(r'^default\s*:', t.content)
+                if m1 or m2:
+                    ch = ';'  # it is a goto! i.e. goto Switch Case handling code
 
             # End-Control Token #
             if ch == '}':
@@ -291,13 +298,13 @@ class JavaSourceFile(SourceFile):
                 t.content += ';'
 
                 if self.statement_pre_read is not None:
-                    ch = self.current_head()
-                    if ch > self.statement_pre_read + 1:
+                    current_head = self.current_head()
+                    if current_head > self.statement_pre_read + 1:
                         raise AssertionError('bad pre-read! pre-read: {0}, current: {1}'.format(self.statement_pre_read,
-                                                                                                ch))
+                                                                                                current_head))
                     else:
                         logger.info('Statement already read, skipping: %s', t.content)
-                        if self.statement_pre_read == ch - 1:
+                        if self.statement_pre_read == current_head - 1:
                             self.statement_pre_read = None
                 else:
                     is_special_statement = False
@@ -307,23 +314,20 @@ class JavaSourceFile(SourceFile):
 
                     # case
                     if self.sw:
-                        logger.warning(t.content)
+                        logger.debug("IN SWITCH: %s", t.content)
 
                         m = re.match(r'^case\s+(?P<cond>.+?)\s*:', t.content)
                         if m:
+                            logger.debug('OPENDED case: %s', m.group('cond'))
                             self.sw.model.add_case(m.group('cond'))
+                            logger.debug('SWITCH is: %s', self.sw)
                             t = None
 
                         elif re.match(r'^default\s*:', t.content):
+                            logger.debug('SWITCH default')
                             self.sw.model.add_default()
+                            logger.debug('SWITCH is: %s', self.sw)
                             t = None
-
-                        elif re.match(r'^break\s*;$', t.content):
-                            self.sw.model.add_break()
-                            t = None
-
-                        # elif re.match(r'\breturn\b.*;', t.content, re.DOTALL):
-                        #     self.sw.model.add_return()
 
                         if t is None:
                             self.rewind_to(first_head)

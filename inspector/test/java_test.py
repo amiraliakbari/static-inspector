@@ -98,6 +98,12 @@ class TestJavaParse(unittest.TestCase):
         self.assertEqual(len(mth4.nested_classes), 1)
         self.assertEqual(len(mth4.nested_functions), 0)
 
+    def test_switch_block(self):
+        sf = SourceFile.build_source_file(os.path.join(self.data_path, 'sample_sources', '8.java'))
+        self.assertEqual(unicode(sf), u'Java SourceFile: 8 imports, 1 classes')
+        aclass1 = sf.get_class('SwitchClass1')
+        self.assertEqual(len(aclass1.fields), 4)
+
 
 class TestParseInternals(unittest.TestCase):
     def test_visibility_parse(self):

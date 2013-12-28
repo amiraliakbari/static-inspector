@@ -3,33 +3,35 @@
 import os
 import sys
 import time
+import socket
 
 sys.path.append(os.path.join(os.path.abspath(os.path.dirname(__file__)), '..', '..', 'inspector'))
 from inspector.saql.sams import SAMS
 
 
+TCP_IP = '127.0.0.1'
+TCP_PORT = 6789
+BUFFER_SIZE = 102400  # Normally 1024, but we want fast response
+
+
 if __name__ == '__main__':
     sams = SAMS()
 
-    try:
-        ind = sys.argv.index('-d')
-    except ValueError:
-        pass  # no database specified
-    else:
-        sams.open_project(sys.argv[ind + 1])
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind((TCP_IP, TCP_PORT))
+    s.listen(1)
 
-    while True:
-        try:
-            qs = raw_input('SAQL> ').strip()
-        except EOFError:
-            print('')
+    conn, addr = s.accept()
+    print "Server Up!"
+    while 1:
+        data = conn.recv(BUFFER_SIZE)
+        if not data:
             break
+        print "received data:", data
 
-        if not qs:
-            continue
+        qs = data
         if qs == '\q':
             break
-
         try:
             start_time = time.time()
             result = sams.run(qs)
@@ -38,6 +40,10 @@ if __name__ == '__main__':
             print('ERROR: {0}'.format(e.message))
         else:
             if result is not None:
-                print(result)
-            print('{0:.1f}ms'.format(d * 1000))
+                conn.send(str(result))
+            else:
+                conn.send('None')
+            print('{0:.1f}ms, {1} chars sent'.format(d * 1000, len(result)))
+
     print('bye!')
+    conn.close()

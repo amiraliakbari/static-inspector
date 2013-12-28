@@ -29,7 +29,7 @@ if __name__ == '__main__':
         data = conn.recv(BUFFER_SIZE)
         if not data:
             break
-        print "received data:", data
+        print "Received data:", data
 
         qs = data.strip()
         if qs == '\q':
@@ -42,10 +42,10 @@ if __name__ == '__main__':
             result = 'ERROR: {0}'.format(e.message)
             d = 0
 
-        if result is not None:
-            conn.send(str(result))
-        else:
-            conn.send('None')
+        if not result:
+            result = 'None'
+        result = str(result).strip() + '\n'
+        conn.send(result)
         print('{0:.1f}ms, {1} chars sent'.format(d * 1000, len(result)))
 
     print('bye!')
